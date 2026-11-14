@@ -201,6 +201,7 @@ export function alertDone() {
   }
   try {
     audioCtx ??= new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
     const t = audioCtx.currentTime;
     for (const [i, f] of [[0, 880], [0.18, 1175]]) {
       const o = audioCtx.createOscillator();

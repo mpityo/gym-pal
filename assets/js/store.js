@@ -11,6 +11,7 @@
  */
 import { PLAN_BY_ID } from './data/plans.js';
 import { exercise } from './data/exercises.js';
+import { adjustRest as adjustRestPure } from './metrics.js';
 
 const KEY = 'gym-pal.v1';
 const listeners = new Set();
@@ -40,6 +41,7 @@ export const defaultState = () => ({
     restAlert: true,
     keepAwake: true,
     autoRest: true,
+    restNotify: false,
   },
 });
 
@@ -302,7 +304,21 @@ export function addHrSample(bpm) {
 /** Rest timer lives on the session so it survives a reload or a phone lock. */
 export function setRest(secs) {
   update((s) => {
-    if (s.active) s.active.rest = secs ? { until: Date.now() + secs * 1000, total: secs } : null;
+    if (s.active) s.active.rest = secs ? { until: Date.now() + secs * 1000, total: secs, alerted: false } : null;
+  });
+}
+
+/** ±N seconds on the time left, without refilling the progress bar. */
+export function adjustRest(deltaSecs) {
+  update((s) => {
+    if (s.active?.rest) s.active.rest = adjustRestPure(s.active.rest, deltaSecs);
+  });
+}
+
+/** Marks the current rest as already alerted, so a reload does not re-alert. */
+export function markRestAlerted() {
+  update((s) => {
+    if (s.active?.rest) s.active.rest.alerted = true;
   });
 }
 

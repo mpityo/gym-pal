@@ -310,6 +310,36 @@ export function suggest(exId, target, sessions, bodyweight) {
   };
 }
 
+// ── Rest timer ───────────────────────────────────────────────────────────
+
+/**
+ * Decides what the rest timer should show/do, independent of which screen is
+ * on top. `rest` is `{ until, total, alerted }` or null/undefined (no timer).
+ *   - 'running': still counting down.
+ *   - 'due': just ended (< 10 s ago) — the moment to beep/toast.
+ *   - 'late': ended 10 s or more ago — the page was likely frozen; no beep.
+ *   - 'done': no rest timer at all.
+ * `left`/`overdue` are seconds, always >= 0.
+ */
+export function restStatus(rest, now = Date.now()) {
+  if (!rest) return { state: 'done', left: 0, overdue: 0 };
+  const left = (rest.until - now) / 1000;
+  if (left > 0) return { state: 'running', left, overdue: 0 };
+  const overdue = -left;
+  return { state: overdue < 10 ? 'due' : 'late', left: 0, overdue };
+}
+
+/**
+ * ±deltaSecs on the time left, keeping `total` at whatever it already was
+ * (growing it if the new time left exceeds it) so the progress bar does not
+ * jump back to full on every tap. Never lets less than 5 s remain.
+ */
+export function adjustRest(rest, deltaSecs, now = Date.now()) {
+  if (!rest) return rest;
+  const left = Math.max(5, (rest.until - now) / 1000 + deltaSecs);
+  return { ...rest, until: now + left * 1000, total: Math.max(rest.total, left), alerted: false };
+}
+
 // ── Weekly volume ────────────────────────────────────────────────────────
 
 function inRange(sessions, from, to) {
