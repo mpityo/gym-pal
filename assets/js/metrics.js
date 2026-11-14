@@ -556,6 +556,36 @@ export function fmtPace(minPerMile) {
   return fmtMinutes(minPerMile);
 }
 
+/**
+ * Minutes from a treadmill-style time field. Accepts `m`, `m.d` or `m:ss`
+ * (seconds 0–59). Anything else — empty, `5:xx`, `5:75` — is `NaN`.
+ */
+export function parseClock(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return NaN;
+  if (s.includes(':')) {
+    const m = /^(\d+):(\d{1,2})$/.exec(s);
+    if (!m) return NaN;
+    const mins = Number(m[1]);
+    const secs = Number(m[2]);
+    if (secs > 59) return NaN;
+    return mins + secs / 60;
+  }
+  if (!/^\d+(\.\d+)?$/.test(s)) return NaN;
+  return Number(s);
+}
+
+/** A positive, finite number from user text. Accepts "12,5". Returns null if it is not one. */
+export function parseAmount(text, { allowZero = false, integer = false } = {}) {
+  const s = String(text ?? '').trim().replace(',', '.');
+  if (!s || !/^\d+(\.\d+)?$/.test(s)) return null;
+  const n = Number(s);
+  if (!Number.isFinite(n)) return null;
+  if (integer && !Number.isInteger(n)) return null;
+  if (n === 0 && !allowZero) return null;
+  return n;
+}
+
 export function fmtDuration(min) {
   const m = Math.round(min);
   if (m < 60) return `${m} min`;

@@ -55,6 +55,25 @@ test('session summary totals and rest', () => {
   assert.equal(sum.avgRestSec, 90);
 });
 
+test('parseClock reads treadmill times, strictly', () => {
+  assert.equal(m.parseClock('5:00'), 5);
+  assert.equal(m.parseClock('9:30'), 9.5);
+  assert.equal(m.parseClock('12'), 12);
+  assert.ok(Number.isNaN(m.parseClock('')));
+  assert.ok(Number.isNaN(m.parseClock('5:xx')));
+  assert.ok(Number.isNaN(m.parseClock('5:75')));
+});
+
+test('parseAmount accepts plain numbers and commas, rejects the rest', () => {
+  assert.equal(m.parseAmount('45'), 45);
+  assert.equal(m.parseAmount('47,5'), 47.5);
+  assert.equal(m.parseAmount('abc'), null);
+  assert.equal(m.parseAmount('-3'), null);
+  assert.equal(m.parseAmount('0'), null);
+  assert.equal(m.parseAmount('0', { allowZero: true }), 0);
+  assert.equal(m.parseAmount('2.5', { integer: true }), null);
+});
+
 test('double progression suggestion', () => {
   const target = { sets: 3, reps: [8, 12] };
   const maxed = [session(0, [{ ex: 'chest-press', sets: sets(100, 12, 12, 12) }])];
