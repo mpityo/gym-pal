@@ -1,8 +1,9 @@
 /** Pieces shared by several screens. */
-import { h, modal, matchScore, fmtRel } from '../util.js';
+import { h, modal, matchScore, fmtRel, fmtDate, toast, shrink, photoInput } from '../util.js';
 import { EXERCISES, MUSCLES, exercise, exerciseOr } from '../data/exercises.js';
 import * as store from '../store.js';
 import { exerciseImages } from '../data/images.js';
+import * as photos from '../photos.js';
 import { machineUsage, fmtLb } from '../metrics.js';
 import { hasKey } from '../ai.js';
 
@@ -120,15 +121,103 @@ function thumbTile(exId, size) {
 }
 
 /**
- * A small square picture of the exercise, or a coloured tile when there is
- * none (or it fails to load offline before it was cached), so rows stay aligned.
+ * Which gym's photos to use. One place for this, so it follows whatever
+ * spec 07 decides is the gym in use (the workout's, else the one picked).
  */
-export function exerciseThumb(exId, { size = 44 } = {}) {
+export function photoGym() {
+  return store.currentGym();
+}
+
+/** The reference picture as a small square, or a coloured tile when there is none (or it fails offline). */
+function referenceThumb(exId, size) {
   const [src] = exerciseImages(exId);
   if (!src) return thumbTile(exId, size);
   const img = h('img', { class: 'thumb', src, alt: '', width: size, height: size, loading: 'lazy', decoding: 'async' });
   img.addEventListener('error', () => img.replaceWith(thumbTile(exId, size)), { once: true });
   return img;
+}
+
+/**
+ * A small square picture of the exercise: your own photo for the current
+ * gym when there is one (marked with a dot), else the reference picture,
+ * else a coloured tile so rows stay aligned. Rendering stays synchronous:
+ * the reference shows at once and your photo replaces it when it loads.
+ */
+export function exerciseThumb(exId, { size = 44 } = {}) {
+  const el = referenceThumb(exId, size);
+  const gid = photoGym();
+  if (photos.photoMeta(exId, gid)) {
+    photos.getPhoto(exId, gid).then((rec) => {
+      if (!rec || !el.parentNode) return;
+      const img = h('img', { src: photos.photoUrl(rec), alt: '', width: size, height: size, decoding: 'async' });
+      el.replaceWith(h('span', { class: 'thumb thumb--mine', style: { width: `${size}px`, height: `${size}px` }, title: 'Your photo' }, img));
+    });
+  }
+  return el;
+}
+
+/**
+ * "Your photo" for the machine page and the How-to sheet: the photo (tap for
+ * full size) labelled with its gym and date, and Add / Retake / Remove.
+ * Removes itself when photos cannot be stored in this browser.
+ */
+export function myPhotoBlock(exId) {
+  const box = h('div', { class: 'myphoto' });
+  const gid = photoGym();
+  const draw = async () => {
+    if (!(await photos.init())) {
+      box.remove();
+      return;
+    }
+    const rec = await photos.getPhoto(exId, gid);
+    const input = photoInput(async (file) => {
+      box.replaceChildren(h('p', { class: 'muted small' }, 'Saving the photo…'));
+      try {
+        const { blob, width, height } = await shrink(file, { max: 1024, quality: 0.8, as: 'blob' });
+        toast((await photos.putPhoto(exId, gid, blob, { width, height })) ? 'Photo saved' : 'Could not save the photo on this phone');
+      } catch (err) {
+        toast(err?.message ?? 'Could not read that photo.');
+      }
+      draw();
+    });
+    const name = exerciseOr(exId).name;
+    if (!rec) {
+      box.replaceChildren(
+        input,
+        h('button', { class: 'btn btn--block', type: 'button', onClick: () => input.open() }, '📷 Add a photo of this machine'),
+        h('p', { class: 'muted small' }, gid ? `Saved for ${gymName(gid)}, on this phone only.` : 'Saved on this phone only.'),
+      );
+      return;
+    }
+    const url = photos.photoUrl(rec);
+    const label = `Your photo · ${rec.gymId ? gymName(rec.gymId) : 'any gym'} · ${fmtDate(rec.takenAt, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+    box.replaceChildren(
+      input,
+      h(
+        'figure',
+        { class: 'figure' },
+        h('button', { class: 'figure__cell', type: 'button', onClick: () => openPicture(url, `${name} · your photo`) }, h('img', { src: url, alt: `Your photo of ${name}` })),
+        h('figcaption', { class: 'muted small' }, label),
+      ),
+      h(
+        'div',
+        { class: 'row row--wrap' },
+        h('button', { class: 'btn btn--small', type: 'button', onClick: () => input.open() }, rec.gymId === (gid ?? null) ? 'Retake' : `Take one for ${gymName(gid)}`),
+        h('button', {
+          class: 'btn btn--small btn--danger-ghost',
+          type: 'button',
+          onClick: async () => {
+            if (!confirm('Remove this photo?')) return;
+            await photos.deletePhoto(exId, rec.gymId);
+            toast('Photo removed');
+            draw();
+          },
+        }, 'Remove'),
+      ),
+    );
+  };
+  draw();
+  return box;
 }
 
 /** Shows a picture full size in a modal. */
@@ -281,6 +370,7 @@ export function openHowTo(exId, ctx) {
     h(
       'div',
       { class: 'stack' },
+      myPhotoBlock(exId),
       exerciseFigure(exId),
       muscleChips(ex),
       h('p', {}, h('strong', {}, 'Look for: '), ex.look),

@@ -228,3 +228,42 @@ export function primeAudio() {
     /* no audio */
   }
 }
+
+/**
+ * Downscale an image file in the browser. `as: 'base64'` (the default) gives
+ * { base64, type, width, height } for an API call; `as: 'blob'` gives
+ * { blob, type, width, height } for storing on the phone.
+ */
+export async function shrink(file, { max = 1280, type = 'image/jpeg', quality = 0.82, as = 'base64' } = {}) {
+  const img = await createImageBitmap(file);
+  const scale = Math.min(1, max / Math.max(img.width, img.height));
+  const width = Math.round(img.width * scale);
+  const height = Math.round(img.height * scale);
+  const canvas = Object.assign(document.createElement('canvas'), { width, height });
+  canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+  img.close?.();
+  if (as === 'blob') {
+    const blob = await new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not read that photo.'))), type, quality));
+    return { blob, type, width, height };
+  }
+  const url = canvas.toDataURL(type, quality);
+  return { base64: url.split(',')[1], type, width, height };
+}
+
+/**
+ * A hidden camera/file input. Call `.open()` on the result to show the
+ * picker; `onFile(file)` gets the chosen file. `value` is cleared after each
+ * pick so choosing the same file again still fires.
+ */
+export function photoInput(onFile) {
+  const input = h('input', {
+    type: 'file', accept: 'image/*', capture: 'environment', hidden: true,
+    onChange: (e) => {
+      const chosen = e.target.files[0];
+      e.target.value = '';
+      if (chosen) onFile(chosen);
+    },
+  });
+  input.open = () => input.click();
+  return input;
+}

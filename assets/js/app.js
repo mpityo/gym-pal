@@ -2,6 +2,7 @@ import { h, clear, toast, fmtSecs, alertDone, primeAudio, download } from './uti
 import * as store from './store.js';
 import * as hr from './hr.js';
 import * as ai from './ai.js';
+import * as photos from './photos.js';
 import { restStatus } from './metrics.js';
 import { exercise } from './data/exercises.js';
 import { renderToday } from './views/today.js';
@@ -77,6 +78,8 @@ function render() {
 
   renderTabs();
   renderTopStatus();
+  // Object URLs for your machine photos are made per render; free the last set.
+  photos.releaseUrls();
 
   const y = ctx.lastRoute === `${ctx.route}/${ctx.param}` ? window.scrollY : 0;
   clear(app);
@@ -286,6 +289,11 @@ document.addEventListener('pointerdown', primeAudio, { once: true });
 
 window.addEventListener('hashchange', render);
 render();
+
+// Your machine photos load from IndexedDB after the first paint; redraw when
+// the index is ready and whenever a photo is added or removed.
+photos.onChange(() => render());
+photos.init();
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   navigator.serviceWorker.register('sw.js').catch(() => {});

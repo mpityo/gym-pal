@@ -1,9 +1,10 @@
-import { h, modal, toast, matchScore, fmtRel, fmtDate } from '../util.js';
+import { h, modal, toast, matchScore, fmtRel, fmtDate, shrink } from '../util.js';
+import * as photos from '../photos.js';
 import * as store from '../store.js';
 import * as ai from '../ai.js';
 import { EXERCISES, MUSCLES, exercise } from '../data/exercises.js';
 import { exerciseHistory, exerciseRecords, fmtW, fmtLb, e1rm, fmtMinutes, fmtPace } from '../metrics.js';
-import { muscleChips, usageMap, empty, gymChip, gymName, missingToggle, exerciseThumb, exerciseFigure } from './common.js';
+import { muscleChips, usageMap, empty, gymChip, gymName, missingToggle, exerciseThumb, exerciseFigure, myPhotoBlock, photoGym } from './common.js';
 import { sparkline } from '../charts.js';
 
 const FILTERS = [
@@ -113,6 +114,7 @@ async function identify(file, ctx) {
       h('ol', { class: 'steps' }, r.setup.map((s) => h('li', {}, s))),
       h('h3', { class: 'eyebrow' }, 'Form'),
       h('ul', { class: 'steps' }, r.cues.map((s) => h('li', {}, s))),
+      ex && savePhotoButton(file, ex),
       ex && h('button', { class: 'btn btn--primary btn--block', type: 'button', onClick: () => { document.querySelector('dialog[open]')?.close(); ctx.go(`machine/${ex.id}`); } }, `Open ${ex.name}`),
       !ex && h('p', { class: 'muted small' }, 'This one is not in the library, so it cannot be tracked by name yet. Log it under the closest match.'),
     );
@@ -121,14 +123,26 @@ async function identify(file, ctx) {
   }
 }
 
-/** Downscale to ~1280px JPEG before sending: faster and cheaper, same answer. */
-async function shrink(file) {
-  const img = await createImageBitmap(file);
-  const scale = Math.min(1, 1280 / Math.max(img.width, img.height));
-  const canvas = Object.assign(document.createElement('canvas'), { width: Math.round(img.width * scale), height: Math.round(img.height * scale) });
-  canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-  const url = canvas.toDataURL('image/jpeg', 0.82);
-  return { base64: url.split(',')[1], type: 'image/jpeg' };
+/** Reuses the photo just taken for identify, so it does not need a second capture. */
+function savePhotoButton(file, ex) {
+  if (photos.isAvailable() === false) return null;
+  const btn = h('button', {
+    class: 'btn btn--block',
+    type: 'button',
+    onClick: async () => {
+      btn.disabled = true;
+      try {
+        const { blob, width, height } = await shrink(file, { max: 1024, quality: 0.8, as: 'blob' });
+        const ok = await photos.putPhoto(ex.id, photoGym(), blob, { width, height });
+        btn.textContent = ok ? `Saved to ${ex.name}` : 'Could not save the photo on this phone';
+        if (!ok) btn.disabled = false;
+      } catch (err) {
+        btn.textContent = err?.message ?? 'Could not read that photo.';
+        btn.disabled = false;
+      }
+    },
+  }, `Save this photo to ${ex.name}`);
+  return btn;
 }
 
 // ── One machine ──────────────────────────────────────────────────────────
@@ -192,6 +206,7 @@ export function renderMachine(ctx) {
       'section',
       { class: 'card' },
       h('div', { class: 'card__head' }, h('h2', { class: 'card__title' }, 'Finding it'), gymChip(ctx)),
+      myPhotoBlock(ex.id),
       exerciseFigure(ex.id),
       h('p', {}, ex.look),
       h('label', { class: 'field' }, h('span', {}, gid ? `Where it is at ${gymName(gid)}` : 'Where it is in your gym'), where),

@@ -1,5 +1,6 @@
 import { h, modal, toast, download, fmtRel, fmtDate, pluralize } from '../util.js';
 import * as store from '../store.js';
+import * as photos from '../photos.js';
 import * as ai from '../ai.js';
 import * as hr from '../hr.js';
 import { readFiles, buildWatch } from '../samsung.js';
@@ -9,6 +10,7 @@ import { maxHr, parseAmount } from '../metrics.js';
 const BOUNDS = { bodyweight: [50, 700], age: [10, 100], maxHr: [100, 230] };
 
 export function renderSetup(ctx) {
+  const includePhotos = photosCheckbox();
   const st = store.getState();
   const p = st.profile;
 
@@ -74,12 +76,28 @@ export function renderSetup(ctx) {
       h('h2', { class: 'card__title' }, 'Your data'),
       h('p', { class: 'muted small' }, 'Everything is stored in this browser on this phone. Export a backup to move it to a new phone. The Claude key is never included.'),
       h('p', { class: 'muted small' }, `Using ${(store.storageEstimate().bytes / 1e6).toFixed(1)} MB of about 5 MB.`),
+      photosLine(),
+      includePhotos,
       h('div', { class: 'row row--wrap' },
         h('button', {
           class: 'btn',
           type: 'button',
-          onClick: () => {
-            download(`gym-pal-backup-${new Date().toISOString().slice(0, 10)}.json`, store.exportJson());
+          onClick: async (e) => {
+            const btn = e.currentTarget;
+            const withPhotos = includePhotos?.querySelector('input')?.checked;
+            let text = store.exportJson();
+            if (withPhotos) {
+              btn.disabled = true;
+              try {
+                const list = await photos.exportPhotos();
+                const data = JSON.parse(text);
+                data.photos = list;
+                text = JSON.stringify(data, null, 1);
+              } finally {
+                btn.disabled = false;
+              }
+            }
+            download(`gym-pal-backup-${new Date().toISOString().slice(0, 10)}.json`, text);
             store.recordBackupExported();
             ctx.rerender();
           },
@@ -89,7 +107,9 @@ export function renderSetup(ctx) {
           class: 'btn btn--danger-ghost',
           type: 'button',
           onClick: () => {
-            if (!confirm('Erase every workout, note and import on this phone?')) return;
+            const { count } = photos.photoStats();
+            if (!confirm(`Erase every workout, note${count ? ', machine photo' : ''} and import on this phone?${count ? ' Photos cannot be brought back with Undo.' : ''}`)) return;
+            photos.clearPhotos();
             const { savedPrev } = store.eraseAll();
             toast('Everything erased', savedPrev ? { action: 'Undo', onAction: () => { store.restorePrevious(); ctx.rerender(); } } : undefined);
             ctx.rerender();
@@ -99,6 +119,25 @@ export function renderSetup(ctx) {
     ),
     h('p', { class: 'muted small center' }, 'Gym Pal · not medical advice. Stop any exercise that causes pain.'),
   );
+}
+
+/** "N machine photos · X MB", or nothing when there are none or photos are unavailable. */
+function photosLine() {
+  const { count, bytes } = photos.photoStats();
+  if (!count) return null;
+  return h('p', { class: 'muted small' }, `${pluralize(count, 'machine photo')} · ${fmtSize(bytes)} (kept separately from the 5 MB above).`);
+}
+
+/** "Include photos" for Export, off by default. Hidden when there are no photos. */
+function photosCheckbox() {
+  const { count, bytes } = photos.photoStats();
+  if (!count) return null;
+  // Base64 makes the file about a third bigger than the photos themselves.
+  return h('label', { class: 'check' }, h('input', { type: 'checkbox' }), h('span', {}, `Include photos in the backup (adds about ${fmtSize((bytes * 4) / 3)})`));
+}
+
+function fmtSize(bytes) {
+  return bytes < 100_000 ? `${Math.max(1, Math.round(bytes / 1000))} KB` : `${(bytes / 1e6).toFixed(1)} MB`;
 }
 
 function seg(label, on, onClick) {
@@ -171,7 +210,17 @@ function importButton(ctx) {
         if (!confirm(question)) return;
 
         const { savedPrev } = store.restoreBackup(result.state);
-        toast('Backup restored', savedPrev ? { action: 'Undo', onAction: () => { store.restorePrevious(); ctx.rerender(); } } : undefined);
+        let photoNote = '';
+        try {
+          const list = JSON.parse(text)?.photos;
+          if (Array.isArray(list) && list.length) {
+            const n = await photos.importPhotos(list);
+            photoNote = n ? ` with ${pluralize(n, 'machine photo')}` : ' (the photos in it could not be saved here)';
+          }
+        } catch {
+          // the state is restored; photos are a bonus
+        }
+        toast(`Backup restored${photoNote}`, savedPrev ? { action: 'Undo', onAction: () => { store.restorePrevious(); ctx.rerender(); } } : undefined);
         ctx.rerender();
       } catch (err) {
         toast(err.message ?? 'Could not read that file.');
