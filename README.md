@@ -45,6 +45,8 @@ Every figure is calculated in `assets/js/metrics.js` and covered by tests in `te
 
 - **Pounds moved** = weight × reps. Dumbbells are logged per hand and counted twice. Leg press, hack squat and Smith machine count only the plates you add, because the sled or bar weight varies by machine. Assisted pull-ups and dips count your bodyweight minus the assist. Push-ups count about 64% of bodyweight.
 - **Estimated 1-rep max** uses the Epley formula: w × (1 + reps / 30).
+- **Warm-up sets** (the two optional ramp-up sets offered on the first big push, pull and leg lift: half the working weight × 8, then three-quarters × 4) count toward pounds moved and reps, but not toward work sets, rest averages, sets per muscle, machine usage, weight suggestions or records. Turn them off in Setup.
+- **Plates per side** for plate-loaded machines are worked out greedily from the largest plate you have ticked (tap the line under the weight to choose). When the weight cannot be made exactly, the line shows the closest loading below it.
 - **Sets per muscle** count primary muscles as 1 set and helping muscles as ½ set (fractional counting, as in Pelland et al. 2025). The 10-set line comes from Schoenfeld et al. 2017. "2×" shows a muscle was trained on two days, the frequency favored by Schoenfeld et al. 2016.
 - **Heart-rate zones** use 50–60–70–80–90% of max heart rate. Max heart rate is 208 − 0.7 × age (Tanaka 2001) unless you enter your own.
 - **Comparisons** use approximate weights: a concert grand piano is about 990 lb, an average new car about 4,300 lb, an African elephant about 13,000 lb, an empty 737 about 91,300 lb, a blue whale about 300,000 lb and the Statue of Liberty about 450,000 lb.

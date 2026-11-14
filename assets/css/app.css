@@ -243,8 +243,8 @@ textarea.input { resize: vertical; }
 .guide__why, .guide__note { font-size: 0.86rem; color: var(--ink-2); margin: 0; }
 .sets { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.25rem; }
 .sets__row { display: grid; grid-template-columns: 1fr 2.2rem; align-items: center; gap: 0.5rem; padding: 0.35rem 0.5rem; border-radius: 6px; background: var(--surface-2); }
-.sets__edit { display: grid; grid-template-columns: 3.6rem 1fr auto; align-items: center; gap: 0.5rem; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; min-height: 2rem; }
-.sets__n { font-size: 0.8rem; color: var(--ink-3); font-weight: 700; }
+.sets__edit { display: grid; grid-template-columns: 4.2rem 1fr auto; align-items: center; gap: 0.5rem; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; min-height: 2rem; }
+.sets__n { font-size: 0.8rem; color: var(--ink-3); font-weight: 700; white-space: nowrap; }
 .sets__v { font-weight: 700; }
 .sets__x { width: 2rem; height: 2rem; border: 0; background: none; color: var(--ink-3); cursor: pointer; border-radius: 6px; }
 .logform { display: grid; gap: 0.6rem; }
@@ -434,3 +434,10 @@ button.crowd__cell { cursor: pointer; }
 .vs--same { color: var(--ink-3); }
 .sets__n .tag--pr { display: block; width: fit-content; margin: 0.1rem 0 0; }
 .tag--pr { background: var(--good-tint); color: var(--good); border-color: var(--good); font-family: var(--sans); }
+
+/* ── Warm-ups and plates (spec 14) ──────────────────────────────────── */
+.warmup { display: grid; gap: 0.35rem; }
+.sets__row.is-warmup { background: transparent; border: 1px dashed var(--line-strong); }
+.sets__row.is-warmup .sets__v { font-weight: 500; color: var(--ink-2); }
+.plates-line { font-family: var(--mono); color: var(--ink-2); font-weight: 500; }
+.preview__plates { grid-column: 2 / -1; font-size: 0.8rem; color: var(--ink-3); font-family: var(--mono); }

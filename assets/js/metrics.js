@@ -88,6 +88,12 @@ function strengthOf(set, ex, bodyweight) {
 
 // ── One session ──────────────────────────────────────────────────────────
 
+/**
+ * Work sets only: warm-up sets (spec 14) count toward pounds moved, but not
+ * toward sets, rest, sets per muscle, suggestions or records.
+ */
+export const work = (sets) => (sets ?? []).filter((s) => !s.warmup);
+
 export function sessionSummary(session, bodyweight) {
   const end = session.endedAt ?? Date.now();
   const durationMin = Math.max(0, (end - session.startedAt) / 60000);
@@ -109,14 +115,17 @@ export function sessionSummary(session, bodyweight) {
       }
       continue;
     }
-    entry.sets.forEach((s, i) => {
-      workSets += 1;
+    for (const s of entry.sets) {
       reps += Number(s.reps) || 0;
       const t = setTonnage(s, ex, bodyweight);
       tonnage += t;
       if (byPattern[ex.pattern] != null) byPattern[ex.pattern] += t;
-      if (i > 0 && s.at && entry.sets[i - 1].at) {
-        const gap = (s.at - entry.sets[i - 1].at) / 1000;
+    }
+    const ws = work(entry.sets);
+    ws.forEach((s, i) => {
+      workSets += 1;
+      if (i > 0 && s.at && ws[i - 1].at) {
+        const gap = (s.at - ws[i - 1].at) / 1000;
         // Ignore gaps that are obviously "walked away", not rest.
         if (gap > 10 && gap < 600) rests.push(gap);
       }
@@ -145,18 +154,21 @@ export function exerciseHistory(sessions, exId, bodyweight) {
   const out = [];
   for (const session of sessions) {
     for (const entry of session.entries) {
-      if (entry.ex !== exId || !entry.sets.length) continue;
+      if (entry.ex !== exId) continue;
+      // Strength comes from work sets only; warm-ups still count as weight moved.
+      const ws = work(entry.sets);
+      if (!ws.length) continue;
       let best = null;
       let tonnage = 0;
-      for (const s of entry.sets) {
-        tonnage += setTonnage(s, ex, bodyweight);
+      for (const s of entry.sets) tonnage += setTonnage(s, ex, bodyweight);
+      for (const s of ws) {
         const score = strengthOf(s, ex, bodyweight);
         if (!best || score > best.score) best = { ...s, score };
       }
       out.push({
         date: session.startedAt,
         sessionId: session.id,
-        sets: entry.sets,
+        sets: ws,
         best,
         tonnage: Math.round(tonnage),
       });
@@ -236,7 +248,7 @@ function recordsBeaten(ex, before, now) {
  */
 export function setRecords(set, exId, earlierSessions, earlierSetsToday, bodyweight) {
   const ex = exercise(exId);
-  if (!ex || ex.track === 'cardio' || !set) return [];
+  if (!ex || ex.track === 'cardio' || !set || set.warmup) return [];
   if (!exerciseHistory(earlierSessions, exId, bodyweight).length) return [];
   const today = (sets) => ({ id: '_today', startedAt: Number.MAX_SAFE_INTEGER, entries: [{ ex: exId, sets }] });
   const before = exerciseRecords([...earlierSessions, today(earlierSetsToday ?? [])], exId, bodyweight);
@@ -451,7 +463,7 @@ export function muscleSets(sessions, from, to) {
     for (const entry of session.entries) {
       const ex = exercise(entry.ex);
       if (!ex || ex.track === 'cardio') continue;
-      const n = entry.sets.length;
+      const n = work(entry.sets).length;
       if (!n) continue;
       for (const m of ex.muscles.primary) {
         out[m] += n;
@@ -571,7 +583,7 @@ export function machineUsage(sessions, bodyweight) {
       if (!ex || !entry.sets.length) continue;
       const row = map.get(entry.ex) ?? { ex: entry.ex, sessions: 0, sets: 0, reps: 0, tonnage: 0, first: session.startedAt, last: 0, minutes: 0 };
       row.sessions += 1;
-      row.sets += entry.sets.length;
+      row.sets += work(entry.sets).length;
       for (const s of entry.sets) {
         row.reps += Number(s.reps) || 0;
         row.tonnage += setTonnage(s, ex, bodyweight);
@@ -859,4 +871,75 @@ export function crowdHint(grid, now = Date.now()) {
     .sort((a, b) => a.score - b.score || b.visits - a.visits)[0];
   if (quieter) text += ` Quieter: ${fmtDayHour(quieter.day, quieter.hour)}.`;
   return { text, score, hour: best.hour, visits: n };
+}
+
+// ── Plates and warm-ups (spec 14) ────────────────────────────────────────
+
+export const PLATES = [45, 35, 25, 10, 5, 2.5];
+
+/**
+ * Plates for ONE side to reach `total` pounds of added plates (the number
+ * this app logs for `load: 'plates'` exercises: plates only, both sides
+ * together, bar/sled excluded). Greedy from the largest plate. When `total`
+ * cannot be made exactly, gives the closest loading below it.
+ * Returns { perSide: [45, 10, 2.5], achieved, exact }.
+ */
+export function platesPerSide(total, available = PLATES, { sides = 2 } = {}) {
+  const t = Number(total);
+  if (!(t > 0)) return { perSide: [], achieved: 0, exact: t === 0 };
+  // Tenths of a pound, so 2.5 lb plates add up without float error.
+  let left = Math.round((t * 10) / sides);
+  const sizes = [...new Set(available.map(Number).filter((x) => x > 0))].sort((a, b) => b - a);
+  const perSide = [];
+  for (const p of sizes) {
+    const u = Math.round(p * 10);
+    while (left >= u) {
+      perSide.push(p);
+      left -= u;
+    }
+  }
+  const achieved = Math.round(perSide.reduce((a, p) => a + p, 0) * sides * 10) / 10;
+  return { perSide, achieved, exact: Math.abs(achieved - t) < 0.001 };
+}
+
+/** "Each side: 45 + 10 + 2.5", or "Each side: 45 + 10 (= 110, closest to 112)"; null for nothing to load. */
+export function plateText(total, available = PLATES) {
+  const r = platesPerSide(total, available);
+  if (!r.perSide.length) return Number(total) > 0 ? `No plate combination fits ${fmtW(Number(total))} lb with the plates ticked.` : null;
+  const list = r.perSide.map((p) => fmtW(p)).join(' + ');
+  return r.exact ? `Each side: ${list}` : `Each side: ${list} (= ${fmtW(r.achieved)}, closest to ${fmtW(Number(total))})`;
+}
+
+/**
+ * Two ramp-up sets before a heavy first lift: half the working weight for 8,
+ * then three-quarters for 4, each rounded down to the exercise's step.
+ * Nothing when the working weight is under four steps (too light to ramp).
+ */
+export function warmupSets(workW, step = 5) {
+  const w = Number(workW);
+  if (!(w > 0) || w < 4 * step) return [];
+  const down = (x) => Math.floor(x / step) * step;
+  const out = [];
+  for (const [f, reps] of [[0.5, 8], [0.75, 4]]) {
+    const x = down(w * f);
+    if (x > 0 && x < w && !out.some((o) => o.w === x)) out.push({ w: x, reps });
+  }
+  return out;
+}
+
+/**
+ * Whether entries[index] gets warm-up sets: for each of push, pull and legs,
+ * the first weight-tracked exercise of the session whose planned rest is at
+ * least 120 s (the big compound lifts in plans.js; not curls or raises).
+ * Works on workout entries ({ ex, target: { rest } }) and plan items ({ ex, rest }).
+ */
+export function needsWarmup(entries, index) {
+  const big = (e) => {
+    const ex = exercise(e?.ex);
+    return !!ex && ex.track === 'weight' && ex.load !== 'assist' && ['push', 'pull', 'legs'].includes(ex.pattern) && (e.target?.rest ?? e.rest ?? 0) >= 120;
+  };
+  const e = entries?.[index];
+  if (!big(e)) return false;
+  const pattern = exercise(e.ex).pattern;
+  return !entries.slice(0, index).some((x) => big(x) && exercise(x.ex).pattern === pattern);
 }

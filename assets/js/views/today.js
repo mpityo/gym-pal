@@ -2,7 +2,7 @@ import { h, toast, fmtRel, download } from '../util.js';
 import * as store from '../store.js';
 import { PLANS, PLAN_BY_ID, WEEK } from '../data/plans.js';
 import { exerciseOr } from '../data/exercises.js';
-import { suggest, weekStart, dayKey, sessionSummary, muscleSets, addDays, fmtLb, fmtDuration, shouldShowBackupReminder, crowdGrid, crowdHint } from '../metrics.js';
+import { suggest, weekStart, dayKey, sessionSummary, muscleSets, addDays, fmtLb, fmtDuration, shouldShowBackupReminder, crowdGrid, crowdHint, plateText } from '../metrics.js';
 import { targetText, pickGym, gymChip, exerciseThumb } from './common.js';
 import { MUSCLES } from '../data/exercises.js';
 
@@ -167,6 +167,7 @@ export function renderToday(ctx) {
         ),
         h('span', { class: 'preview__target' }, targetText({ sets: item.sets, reps: item.reps, secs: item.secs, miles: item.miles, minutes: item.minutes }, ex)),
         sug?.text && ex.track !== 'cardio' && h('span', { class: `preview__sug${sug.up ? ' is-up' : sug.deload ? ' is-deload' : ''}` }, sug.up ? `↑ ${sug.text}` : sug.deload ? `↓ ${sug.text} (deload)` : sug.text),
+        ex.load === 'plates' && sug?.w > 0 && h('span', { class: 'preview__plates' }, plateText(sug.w, st.prefs.plates)),
         note.where && h('span', { class: 'preview__where' }, `📍 ${note.where}`),
       );
     }),
