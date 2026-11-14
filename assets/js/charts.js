@@ -125,3 +125,29 @@ export function zoneBar(zones) {
     ),
   );
 }
+
+/**
+ * Busy-times grid: rows Mon–Sun, one column per hour in `hours`. Each
+ * cell's colour is its crowd score (five levels); empty cells stay blank.
+ * `score(cell)` and `onCell(day, hour, cell)` come from the caller.
+ */
+export function crowdHeat(grid, { hours, score, onCell, label = (h) => String(h) }) {
+  const days = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+  const cols = `1.1rem repeat(${hours.length}, minmax(11px, 1fr))`;
+  const head = h('div', { class: 'crowd__row', style: { gridTemplateColumns: cols } }, h('span', {}), hours.map((hr, i) => h('span', { class: 'crowd__hour' }, i % 2 === 0 ? label(hr) : '')));
+  const rows = grid.cells.map((row, day) =>
+    h(
+      'div',
+      { class: 'crowd__row', style: { gridTemplateColumns: cols } },
+      h('span', { class: 'crowd__day' }, days[day]),
+      hours.map((hr) => {
+        const cell = row[hr];
+        const sc = score(cell);
+        if (sc == null) return h('span', { class: 'crowd__cell is-empty' });
+        const level = Math.min(5, Math.max(1, Math.round(sc)));
+        return h('button', { class: `crowd__cell c${level}${cell.rated ? '' : ' is-estimate'}`, type: 'button', 'aria-label': `${day}-${hr}`, onClick: () => onCell?.(day, hr, cell) });
+      }),
+    ),
+  );
+  return h('div', { class: 'crowd' }, head, rows);
+}
