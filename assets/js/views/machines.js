@@ -3,7 +3,7 @@ import * as store from '../store.js';
 import * as ai from '../ai.js';
 import { EXERCISES, MUSCLES, exercise } from '../data/exercises.js';
 import { exerciseHistory, exerciseRecords, fmtW, fmtLb, e1rm, fmtMinutes, fmtPace } from '../metrics.js';
-import { muscleChips, usageMap, empty, gymChip, gymName, missingToggle } from './common.js';
+import { muscleChips, usageMap, empty, gymChip, gymName, missingToggle, exerciseThumb, exerciseFigure } from './common.js';
 import { sparkline } from '../charts.js';
 
 const FILTERS = [
@@ -41,7 +41,7 @@ export function renderMachines(ctx) {
             return h(
               'button',
               { class: 'mrow', type: 'button', onClick: () => ctx.go(`machine/${e.id}`) },
-              h('span', { class: `mrow__pattern p-${e.pattern}`, 'aria-hidden': 'true' }),
+              exerciseThumb(e.id),
               h('span', { class: 'mrow__main' },
                 h('span', { class: 'mrow__name' }, e.name, note.missing && h('span', { class: 'tag tag--warn' }, 'not at this gym')),
                 h('span', { class: 'mrow__meta' }, e.muscles.primary.map((m) => MUSCLES[m]).join(', ')),
@@ -192,6 +192,7 @@ export function renderMachine(ctx) {
       'section',
       { class: 'card' },
       h('div', { class: 'card__head' }, h('h2', { class: 'card__title' }, 'Finding it'), gymChip(ctx)),
+      exerciseFigure(ex.id),
       h('p', {}, ex.look),
       h('label', { class: 'field' }, h('span', {}, gid ? `Where it is at ${gymName(gid)}` : 'Where it is in your gym'), where),
       h('label', { class: 'field' }, h('span', {}, 'Your settings (seat, pads, grip)'), settings),

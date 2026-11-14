@@ -6,7 +6,7 @@ import { PLAN_BY_ID } from '../data/plans.js';
 import {
   suggest, sessionSummary, newRecords, comparison, hrSummary, maxHr, fmtW, fmtLb, fmtDuration, fmtMinutes, fmtPace, parseClock, parseAmount,
 } from '../metrics.js';
-import { targetText, openSwap, openHowTo, openExercisePicker, pickGym, gymName } from './common.js';
+import { targetText, openSwap, openHowTo, openExercisePicker, pickGym, gymName, exerciseThumb } from './common.js';
 import { zoneBar } from '../charts.js';
 
 /** Typed-but-not-logged values, so a re-render does not wipe them. */
@@ -145,7 +145,8 @@ function openEntry(ctx, a, entry, i, st) {
 
   const head = h(
     'div',
-    { class: 'entry__head' },
+    { class: 'entry__head entry__head--thumb' },
+    h('button', { class: 'entry__thumb', type: 'button', 'aria-label': `How to: ${ex.name}`, onClick: () => openHowTo(entry.ex, ctx) }, exerciseThumb(entry.ex, { size: 64 })),
     h('div', {}, h('h3', { class: 'entry__title' }, ex.name), h('p', { class: 'muted small' }, targetText(entry.target, ex), entry.target.rest && ex.track !== 'cardio' ? ` · rest ${fmtSecs(entry.target.rest)}` : '', entry.autoSwap ? ` · ${exerciseOr(entry.plannedEx).name} is not at this gym` : entry.plannedEx !== entry.ex ? ` · swapped for ${exerciseOr(entry.plannedEx).name}` : '', entry.unavailable ? ' · not at this gym — swap or skip' : '')),
   );
 
