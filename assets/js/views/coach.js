@@ -3,7 +3,7 @@ import * as store from '../store.js';
 import * as ai from '../ai.js';
 import { EXERCISES, MUSCLES, exerciseOr } from '../data/exercises.js';
 import { PLAN_BY_ID } from '../data/plans.js';
-import { suggest, exerciseRecords, muscleSets, weekStart, addDays, sessionSummary, dayKey } from '../metrics.js';
+import { suggest, exerciseRecords, muscleSets, weekStart, addDays, sessionSummary, dayKey, crowdGrid, quietTimes, busyTimes, fmtDayHour } from '../metrics.js';
 import { targetText } from './common.js';
 import { todayPlan } from './today.js';
 
@@ -26,6 +26,7 @@ function context(extra = {}) {
   return {
     profile: { bodyweightLb: bw, age: st.profile.age },
     gym: g ? { name: g.name, chain: g.chain || undefined, missingHere: store.missingAt(gid) } : null,
+    gymBusyTimes: busyTimesFor(st.sessions, gid),
     plan: st.prefs.mode === '3day' ? '3-day full body' : '4-day upper/lower (Mon Upper A, Tue Lower A, Thu Upper B, Fri Lower B)',
     askingAbout: about ? { id: about.id, name: about.name, setup: about.setup, cues: about.cues, alternatives: about.alts.map((x) => exerciseOr(x).name), myNotes: store.machineNote(about.id), records: exerciseRecords(st.sessions, about.id, bw) } : undefined,
     workoutInProgress: a
@@ -104,4 +105,14 @@ export function openCoach(ctx, extra = {}) {
   draw();
   modal('Coach', h('div', { class: 'stack' }, log, h('div', { class: 'chat__compose' }, input, send), h('p', { class: 'muted small' }, 'Not medical advice. Stop anything that hurts.')), { wide: true });
   setTimeout(() => input.focus(), 50);
+}
+
+/** Labels only, e.g. { quietest: ['Sat 9 am'], busiest: ['Mon 6 pm'] }, or undefined without data. */
+function busyTimesFor(sessions, gid) {
+  const grid = crowdGrid(sessions, gid);
+  if (grid.totalRated < 3) return undefined;
+  const label = (c) => fmtDayHour(c.day, c.hour);
+  const quietest = quietTimes(grid).map(label);
+  const busiest = busyTimes(grid).map(label);
+  return quietest.length || busiest.length ? { quietest, busiest } : undefined;
 }

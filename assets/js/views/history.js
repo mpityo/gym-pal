@@ -4,7 +4,7 @@ import { exerciseOr } from '../data/exercises.js';
 import { sessionSummary, hrSummary, maxHr, weekStart, fmtLb, fmtDuration, fmtW, fmtMinutes, fmtPace } from '../metrics.js';
 import { watchForSession } from '../samsung.js';
 import { zoneBar } from '../charts.js';
-import { empty, pickGym, gymName } from './common.js';
+import { empty, pickGym, gymName, crowdChips } from './common.js';
 
 export function renderHistory(ctx) {
   const st = store.getState();
@@ -78,6 +78,7 @@ function openSession(s, ctx) {
       'div',
       { class: 'stack' },
       h('p', { class: 'muted small' }, `${fmtClock(s.startedAt)}–${fmtClock(s.endedAt)}`, gymBtn ? [' · ', gymBtn] : s.geo ? ' · location saved' : ''),
+      h('div', { class: 'row row--wrap' }, h('span', { class: 'muted small' }, 'How busy:'), crowdChips(s.crowd, (v) => { store.updateSession(s.id, { crowd: v ?? undefined }); ctx.rerender(); })),
       h('div', { class: 'stat-grid' },
         h('div', { class: 'stat' }, h('span', { class: 'stat__value' }, fmtDuration(sum.durationMin)), h('span', { class: 'stat__label' }, 'duration')),
         h('div', { class: 'stat' }, h('span', { class: 'stat__value' }, String(sum.workSets)), h('span', { class: 'stat__label' }, 'sets')),

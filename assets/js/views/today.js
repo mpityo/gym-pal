@@ -2,7 +2,7 @@ import { h, toast, fmtRel, download } from '../util.js';
 import * as store from '../store.js';
 import { PLANS, PLAN_BY_ID, WEEK } from '../data/plans.js';
 import { exerciseOr } from '../data/exercises.js';
-import { suggest, weekStart, dayKey, sessionSummary, muscleSets, addDays, fmtLb, fmtDuration, shouldShowBackupReminder } from '../metrics.js';
+import { suggest, weekStart, dayKey, sessionSummary, muscleSets, addDays, fmtLb, fmtDuration, shouldShowBackupReminder, crowdGrid, crowdHint } from '../metrics.js';
 import { targetText, pickGym, gymChip, exerciseThumb } from './common.js';
 import { MUSCLES } from '../data/exercises.js';
 
@@ -142,6 +142,8 @@ export function renderToday(ctx) {
     }),
   );
 
+  const crowd = crowdHint(crowdGrid(st.sessions, store.currentGym()), now);
+
   const preview = h(
     'ol',
     { class: 'preview' },
@@ -195,6 +197,7 @@ export function renderToday(ctx) {
           h('div', {}, h('p', { class: 'eyebrow' }, plan.rest ? `Rest day · ${plan.label}` : plan.doneToday ? 'Done for today · next time' : plan.label), h('h2', { class: 'plan-title' }, p.name)),
           h('span', { class: 'muted small' }, `${items.filter((i) => exerciseOr(i.ex).track !== 'cardio').length} lifts · ~${Math.round(estimateMinutes(items))} min`),
         ),
+        crowd && h('p', { class: 'muted small' }, crowd.text),
         plan.rest && plan.restNote && h('p', { class: 'muted' }, plan.weekDone >= plan.weekTarget ? `All ${plan.weekTarget} done this week. ${plan.restNote} — ${p.name} is up next.` : `${plan.restNote}. ${plan.missed.length === 1 ? `${PLAN_BY_ID[plan.missed[0]].name} got skipped this week — want to catch up?` : plan.missed.length > 1 ? `${plan.missed.length} workouts are still open this week. Catch up with the first one, or just pick up the plan on Monday.` : 'Or start the next workout early.'}`),
         preview,
         h('button', { class: 'btn btn--primary btn--block btn--big', type: 'button', onClick: (e) => start(plan.planId, ctx, e.currentTarget) }, `Start ${p.name}`),

@@ -381,3 +381,13 @@ test('flush() gives up the undo snapshot when that is what makes the save fit', 
     globalThis.localStorage.setItem = real;
   }
 });
+
+test('swapExercise records why it was swapped; an unknown reason is ignored', () => {
+  store._resetForTests();
+  store.startSession('upper-a');
+  const alt = store.active().entries[1].ex === 'pec-deck' ? 'cable-fly' : 'pec-deck';
+  store.swapExercise(1, alt, 'taken');
+  assert.equal(store.active().entries[1].swapReason, 'taken');
+  store.swapExercise(1, 'chest-press', 'bogus');
+  assert.equal(store.active().entries[1].swapReason, 'taken');
+});

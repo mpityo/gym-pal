@@ -4,7 +4,7 @@ import { EXERCISES, MUSCLES, exercise, exerciseOr } from '../data/exercises.js';
 import * as store from '../store.js';
 import { exerciseImages } from '../data/images.js';
 import * as photos from '../photos.js';
-import { machineUsage, fmtLb } from '../metrics.js';
+import { machineUsage, fmtLb, CROWD_LABELS } from '../metrics.js';
 import { hasKey } from '../ai.js';
 
 export function muscleChips(ex) {
@@ -270,10 +270,36 @@ function exerciseOption(ex, usage, onPick) {
 }
 
 /**
+ * "How busy was the gym?" — five chips (1–5). Tapping saves at once via
+ * onChange(value); tapping the selected one again clears it (null).
+ */
+export function crowdChips(value, onChange) {
+  let current = value ?? null;
+  const row = h('div', { class: 'row row--wrap crowd-chips', role: 'group', 'aria-label': 'How busy was the gym?' });
+  const draw = () =>
+    row.replaceChildren(
+      ...CROWD_LABELS.map((label, i) =>
+        h('button', {
+          class: `chip chip--btn${current === i + 1 ? ' chip--on' : ''}`,
+          type: 'button',
+          'aria-pressed': current === i + 1,
+          onClick: () => {
+            current = current === i + 1 ? null : i + 1;
+            draw();
+            onChange(current);
+          },
+        }, label),
+      ),
+    );
+  draw();
+  return row;
+}
+
+/**
  * Alternatives for an exercise: its listed swaps first, then everything else
  * that trains the same primary muscle, then a search over the whole library.
  */
-export function openSwap(exId, { title = 'Swap exercise', onPick, planName, allowPermanent = false } = {}) {
+export function openSwap(exId, { title = 'Swap exercise', onPick, planName, allowPermanent = false, askReason = false } = {}) {
   const ex = exerciseOr(exId);
   const usage = usageMap();
   const listed = missingLast(ex.alts.map(exercise).filter(Boolean));
@@ -281,6 +307,34 @@ export function openSwap(exId, { title = 'Swap exercise', onPick, planName, allo
     (e) => e.id !== ex.id && !ex.alts.includes(e.id) && e.pattern === ex.pattern && e.muscles.primary.some((m) => ex.muscles.primary.includes(m)),
   ));
   let always = false;
+  let reason = 'taken';
+  let markMissing = false;
+  const gid = store.currentGym();
+  const missingBox = gid
+    ? h('label', { class: 'check', hidden: true }, h('input', { type: 'checkbox', onChange: (e) => (markMissing = e.target.checked) }), h('span', {}, `Mark ${ex.name} as not at ${gymName(gid)}`))
+    : null;
+  const reasons = askReason
+    ? h('div', { class: 'row row--wrap', role: 'group', 'aria-label': 'Why?' },
+        h('span', { class: 'muted small' }, 'Why?'),
+        [['taken', 'Taken'], ['missing', 'Not here'], ['prefer', 'Prefer this']].map(([id, label]) =>
+          h('button', {
+            class: `chip chip--btn${id === reason ? ' chip--on' : ''}`,
+            type: 'button',
+            'aria-pressed': id === reason,
+            dataset: { reason: id },
+            onClick: (e) => {
+              reason = id;
+              for (const b of e.currentTarget.parentNode.querySelectorAll('button')) {
+                const on = b.dataset.reason === id;
+                b.classList.toggle('chip--on', on);
+                b.setAttribute('aria-pressed', on);
+              }
+              if (missingBox) missingBox.hidden = id !== 'missing';
+            },
+          }, label),
+        ),
+      )
+    : null;
   const results = h('div', { class: 'pick-list' });
   const search = h('input', {
     class: 'input',
@@ -303,7 +357,7 @@ export function openSwap(exId, { title = 'Swap exercise', onPick, planName, allo
   });
   const pick = (id) => {
     dialog.close();
-    onPick(id, { always });
+    onPick(id, { always, reason: askReason ? reason : undefined, markMissing: askReason && reason === 'missing' && markMissing });
   };
   const dialog = modal(
     title,
@@ -311,6 +365,8 @@ export function openSwap(exId, { title = 'Swap exercise', onPick, planName, allo
       'div',
       { class: 'stack' },
       h('p', { class: 'muted' }, `Instead of ${ex.name}. These hit the same muscles the same way.`),
+      reasons,
+      reasons && missingBox,
       h('h3', { class: 'eyebrow' }, 'Best swaps'),
       h('div', { class: 'pick-list' }, listed.map((e) => exerciseOption(e, usage, pick))),
       same.length > 0 && h('h3', { class: 'eyebrow' }, 'Also works'),
