@@ -1,10 +1,10 @@
 import { h, modal, fmtDate, fmtClock } from '../util.js';
 import * as store from '../store.js';
-import { exercise } from '../data/exercises.js';
+import { exerciseOr } from '../data/exercises.js';
 import { sessionSummary, hrSummary, maxHr, weekStart, fmtLb, fmtDuration, fmtW, fmtMinutes, fmtPace } from '../metrics.js';
 import { watchForSession } from '../samsung.js';
 import { zoneBar } from '../charts.js';
-import { empty } from './common.js';
+import { empty, pickGym, gymName } from './common.js';
 
 export function renderHistory(ctx) {
   const st = store.getState();
@@ -57,14 +57,27 @@ function openSession(s, ctx) {
   const sum = sessionSummary(s, bw);
   const wd = watchForSession(s, st.watch);
   const hs = wd.samples ? hrSummary(wd.samples, maxHr(st.profile)) : null;
-  const g = s.gymId && store.gym(s.gymId);
+  const gymLabel = () => (s.gymId && store.gym(s.gymId) ? `📍 ${gymName(s.gymId)}` : s.gymId ? '📍 Removed gym' : st.gyms.length ? '📍 No gym' : '');
+  const gymBtn = st.gyms.length
+    ? h('button', {
+        class: 'linkish small',
+        type: 'button',
+        onClick: async () => {
+          const next = await pickGym({ title: 'Where was this?', current: s.gymId ?? null });
+          if (next === undefined || next === s.gymId) return;
+          store.updateSession(s.id, { gymId: next });
+          gymBtn.textContent = `${gymLabel()} ▾`;
+          ctx.rerender();
+        },
+      }, `${gymLabel()} ▾`)
+    : null;
 
   const dialog = modal(
     `${s.name} · ${fmtDate(s.startedAt)}`,
     h(
       'div',
       { class: 'stack' },
-      h('p', { class: 'muted small' }, `${fmtClock(s.startedAt)}–${fmtClock(s.endedAt)}${g ? ` · 📍 ${g.name}` : s.geo ? ' · location saved' : ''}`),
+      h('p', { class: 'muted small' }, `${fmtClock(s.startedAt)}–${fmtClock(s.endedAt)}`, gymBtn ? [' · ', gymBtn] : s.geo ? ' · location saved' : ''),
       h('div', { class: 'stat-grid' },
         h('div', { class: 'stat' }, h('span', { class: 'stat__value' }, fmtDuration(sum.durationMin)), h('span', { class: 'stat__label' }, 'duration')),
         h('div', { class: 'stat' }, h('span', { class: 'stat__value' }, String(sum.workSets)), h('span', { class: 'stat__label' }, 'sets')),
@@ -72,10 +85,10 @@ function openSession(s, ctx) {
         sum.avgRestSec && h('div', { class: 'stat' }, h('span', { class: 'stat__value' }, `${Math.round(sum.avgRestSec)} s`), h('span', { class: 'stat__label' }, 'avg rest')),
       ),
       h('ol', { class: 'detail' }, s.entries.map((e) => {
-        const ex = exercise(e.ex);
+        const ex = exerciseOr(e.ex);
         return h('li', {},
           h('button', { class: 'linkish', type: 'button', onClick: () => { dialog.close(); ctx.go(`machine/${e.ex}`); } }, ex.name),
-          e.plannedEx !== e.ex && h('span', { class: 'muted small' }, ` (instead of ${exercise(e.plannedEx).name})`),
+          e.plannedEx !== e.ex && h('span', { class: 'muted small' }, ` (instead of ${exerciseOr(e.plannedEx).name})`),
           h('div', { class: 'mono small' }, e.sets.map((x) => setText(x, ex)).join(' · ')),
         );
       })),
