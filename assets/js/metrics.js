@@ -202,24 +202,77 @@ export function newRecords(session, earlier, bodyweight) {
   for (const entry of session.entries) {
     const ex = exercise(entry.ex);
     if (!ex || ex.track === 'cardio' || !entry.sets.length) continue;
-    const before = exerciseRecords(earlier, entry.ex, bodyweight);
     const hasHistory = exerciseHistory(earlier, entry.ex, bodyweight).length > 0;
     if (!hasHistory) continue;
+    const before = exerciseRecords(earlier, entry.ex, bodyweight);
     const now = exerciseRecords([session], entry.ex, bodyweight);
-    if (now.bestE1rm && before.bestE1rm && now.bestE1rm.value > before.bestE1rm.value + 0.01) {
-      out.push({ ex: entry.ex, kind: 'Estimated 1-rep max', value: Math.round(now.bestE1rm.value), was: Math.round(before.bestE1rm.value) });
-    }
-    if (now.heaviest && before.heaviest && ex.load !== 'assist' &&Number(now.heaviest.w) > Number(before.heaviest.w)) {
-      out.push({ ex: entry.ex, kind: 'Heaviest set', value: Number(now.heaviest.w), was: Number(before.heaviest.w) });
-    }
-    if (ex.load === 'assist' && now.heaviest && before.heaviest && Number(now.heaviest.w) < Number(before.heaviest.w)) {
-      out.push({ ex: entry.ex, kind: 'Least assistance', value: Number(now.heaviest.w), was: Number(before.heaviest.w) });
-    }
-    if (now.longest && before.longest && now.longest.secs > before.longest.secs) {
-      out.push({ ex: entry.ex, kind: 'Longest hold', value: now.longest.secs, was: before.longest.secs });
-    }
+    for (const r of recordsBeaten(ex, before, now)) out.push({ ex: entry.ex, ...r });
   }
   return out;
+}
+
+/** The one definition of "a record was beaten", shared by newRecords and setRecords. */
+function recordsBeaten(ex, before, now) {
+  const out = [];
+  if (now.bestE1rm && before.bestE1rm && now.bestE1rm.value > before.bestE1rm.value + 0.01) {
+    out.push({ kind: 'Estimated 1-rep max', value: Math.round(now.bestE1rm.value), was: Math.round(before.bestE1rm.value) });
+  }
+  if (now.heaviest && before.heaviest && ex.load !== 'assist' && Number(now.heaviest.w) > Number(before.heaviest.w)) {
+    out.push({ kind: 'Heaviest set', value: Number(now.heaviest.w), was: Number(before.heaviest.w) });
+  }
+  if (ex.load === 'assist' && now.heaviest && before.heaviest && Number(now.heaviest.w) < Number(before.heaviest.w)) {
+    out.push({ kind: 'Least assistance', value: Number(now.heaviest.w), was: Number(before.heaviest.w) });
+  }
+  if (now.longest && before.longest && now.longest.secs > before.longest.secs) {
+    out.push({ kind: 'Longest hold', value: now.longest.secs, was: before.longest.secs });
+  }
+  return out;
+}
+
+/**
+ * Records the just-logged `set` beat, compared with all earlier sessions AND
+ * the sets already logged today. Same kinds and rules as newRecords; quiet
+ * for an exercise with no earlier sessions (the first time is not a PR).
+ */
+export function setRecords(set, exId, earlierSessions, earlierSetsToday, bodyweight) {
+  const ex = exercise(exId);
+  if (!ex || ex.track === 'cardio' || !set) return [];
+  if (!exerciseHistory(earlierSessions, exId, bodyweight).length) return [];
+  const today = (sets) => ({ id: '_today', startedAt: Number.MAX_SAFE_INTEGER, entries: [{ ex: exId, sets }] });
+  const before = exerciseRecords([...earlierSessions, today(earlierSetsToday ?? [])], exId, bodyweight);
+  const now = exerciseRecords([...earlierSessions, today([...(earlierSetsToday ?? []), set])], exId, bodyweight);
+  return recordsBeaten(ex, before, now);
+}
+
+/** The most recent time this exercise was done: { date, sets }, or null. */
+export function lastPerformance(sessions, exId) {
+  const hist = exerciseHistory(sessions, exId, 0);
+  const last = hist[hist.length - 1];
+  return last ? { date: last.date, sets: last.sets } : null;
+}
+
+/**
+ * How a set compares with the same-numbered set last time: weight first,
+ * then reps (seconds for holds). { dir: 1 | 0 | -1, text } or null (cardio,
+ * or nothing to compare with).
+ */
+export function compareSet(set, prev, ex) {
+  if (!set || !prev || !ex || ex.track === 'cardio') return null;
+  const plural = (n, word) => `${n} ${word}${Math.abs(n) === 1 ? '' : 's'}`;
+  if (ex.track === 'time') {
+    const d = (Number(set.secs) || 0) - (Number(prev.secs) || 0);
+    return d > 0 ? { dir: 1, text: `▲ +${d} s` } : d < 0 ? { dir: -1, text: `▼ −${-d} s` } : { dir: 0, text: '=' };
+  }
+  if (ex.track === 'weight') {
+    // Less help is better on assisted lifts.
+    const dw = ((Number(set.w) || 0) - (Number(prev.w) || 0)) * (ex.load === 'assist' ? -1 : 1);
+    if (dw !== 0) {
+      const lb = fmtW(Math.abs(Number(set.w) - Number(prev.w)));
+      return dw > 0 ? { dir: 1, text: `▲ ${ex.load === 'assist' ? '−' : '+'}${lb} lb` } : { dir: -1, text: `▼ ${ex.load === 'assist' ? '+' : '−'}${lb} lb` };
+    }
+  }
+  const dr = (Number(set.reps) || 0) - (Number(prev.reps) || 0);
+  return dr > 0 ? { dir: 1, text: `▲ +${plural(dr, 'rep')}` } : dr < 0 ? { dir: -1, text: `▼ −${plural(-dr, 'rep')}` } : { dir: 0, text: '=' };
 }
 
 // ── What to lift today ───────────────────────────────────────────────────
@@ -272,7 +325,15 @@ export function suggest(exId, target, sessions, bodyweight) {
 
   if (ex.track === 'bodyweight' || ex.load === 'none' || ex.load === 'body') {
     const best = Math.max(...sets.map((s) => Number(s.reps) || 0));
-    return { w: topW || 0, reps: Math.min(best + 1, max + 5), text: `${best + 1} reps`, reason: `${summary} Beat it by one.` };
+    // One number for both the pre-filled value and the text.
+    const next = Math.min(best + 1, max + 5);
+    const capped = next < best + 1;
+    return {
+      w: topW || 0,
+      reps: next,
+      text: `${next} reps`,
+      reason: capped ? `${summary} You are well past the range — add weight or pick a harder variation.` : `${summary} Beat it by one.`,
+    };
   }
 
   if (ex.load === 'assist') {
@@ -293,6 +354,8 @@ export function suggest(exId, target, sessions, bodyweight) {
       up: true,
     };
   }
+  const deload = plateauDeload(hist, target, max, step);
+  if (deload) return deload;
   if (anyMissed) {
     return {
       w: topW,
@@ -307,6 +370,35 @@ export function suggest(exId, target, sessions, bodyweight) {
     reps: Math.min(lowest + 1, max),
     text: `${fmtW(topW)} lb`,
     reason: `${summary} Same weight — add a rep to your weakest set.`,
+  };
+}
+
+/**
+ * Three sessions at the same top weight, none with every set at the top of
+ * the range, and no more total reps at that weight in the last than in the
+ * first: a plateau. Suggest about 10% less (rounded down to the exercise's
+ * step, never below one step) for clean sets at the top of the range; the
+ * normal rules then build back up. null when it is not a plateau.
+ */
+function plateauDeload(hist, target, max, step) {
+  if (hist.length < 3) return null;
+  const last3 = hist.slice(-3);
+  const tops = last3.map((h) => Math.max(...h.sets.map((s) => Number(s.w) || 0)));
+  if (!tops.every((w) => w === tops[0]) || !(tops[0] > 0)) return null;
+  const topW = tops[0];
+  const atTop = (h) => h.sets.filter((s) => Number(s.w) === topW);
+  const maxed = (h) => atTop(h).length >= (target?.sets ?? h.sets.length) && atTop(h).every((s) => Number(s.reps) >= max);
+  if (last3.some(maxed)) return null;
+  const reps = (h) => atTop(h).reduce((a, s) => a + (Number(s.reps) || 0), 0);
+  if (reps(last3[2]) > reps(last3[0])) return null;
+  const w = Math.max(step, Math.floor((topW * 0.9) / step) * step);
+  if (w >= topW) return null;
+  return {
+    w,
+    reps: max,
+    text: `${fmtW(w)} lb`,
+    deload: true,
+    reason: `Three sessions at ${fmtW(topW)} lb without adding reps. Drop to ${fmtW(w)} lb for clean sets of ${max}, then build back up.`,
   };
 }
 
