@@ -1,10 +1,11 @@
-import { h, modal, toast, fmtSecs, fmtClock } from '../util.js';
+import { h, modal, toast, fmtSecs, fmtClock, fmtDate } from '../util.js';
 import * as store from '../store.js';
 import * as hr from '../hr.js';
 import { exerciseOr } from '../data/exercises.js';
 import { PLAN_BY_ID } from '../data/plans.js';
 import {
   suggest, sessionSummary, newRecords, comparison, hrSummary, maxHr, fmtW, fmtLb, fmtDuration, fmtMinutes,
+  lastPerformance, compareSet, setRecords,
 } from '../metrics.js';
 import { crowdChips, targetText, openSwap, openHowTo, openExercisePicker, pickGym, gymName, exerciseThumb } from './common.js';
 import { zoneBar } from '../charts.js';
@@ -143,6 +144,8 @@ function openEntry(ctx, a, entry, i, st) {
   const note = store.machineNote(entry.ex);
   const d = (draft[a.id + i] ??= {});
   const lastSet = entry.sets[entry.sets.length - 1];
+  // Last time for the exercise actually being done (after a swap, the swapped-in one).
+  const prev = lastPerformance(earlier, entry.ex);
 
   const head = h(
     'div',
@@ -196,8 +199,8 @@ function openEntry(ctx, a, entry, i, st) {
 
   const guide = h(
     'div',
-    { class: `guide${sug?.up ? ' guide--up' : ''}` },
-    sug?.text && h('p', { class: 'guide__main' }, sug.up ? '↑ ' : '', ex.track === 'cardio' ? `Target: ${sug.text}` : sug.w == null && ex.track === 'weight' ? sug.text : `Try ${sug.text}`),
+    { class: `guide${sug?.up ? ' guide--up' : sug?.deload ? ' guide--deload' : ''}` },
+    sug?.text && h('p', { class: 'guide__main' }, sug.up ? '↑ ' : sug?.deload ? '↓ ' : '', ex.track === 'cardio' ? `Target: ${sug.text}` : sug.w == null && ex.track === 'weight' ? sug.text : `Try ${sug.text}`),
     sug?.reason && h('p', { class: 'guide__why' }, sug.reason),
     (note.where || note.settings) && h('p', { class: 'guide__note' }, note.where && `📍 ${note.where}`, note.where && note.settings && ' · ', note.settings && `⚙ ${note.settings}`),
     entry.target.note && h('p', { class: 'guide__note' }, entry.target.note),
@@ -217,9 +220,9 @@ function openEntry(ctx, a, entry, i, st) {
               'aria-label': `Edit set ${j + 1}`,
               onClick: () => openSetEditor({ title: `Set ${j + 1} · ${ex.name}`, ex, set: s, onSave: (patch) => { store.editSet(i, j, patch); toast('Set updated'); ctx.rerender(); } }),
             },
-              h('span', { class: 'sets__n' }, `Set ${j + 1}`),
+              h('span', { class: 'sets__n' }, `Set ${j + 1}`, s.pr?.length ? h('span', { class: 'tag tag--pr', title: s.pr.join(', ') }, 'PR') : null),
               h('span', { class: 'sets__v mono' }, setLabel(s, ex)),
-              h('span', { class: 'sets__t muted small' }, fmtClock(s.at)),
+              h('span', { class: 'sets__t muted small' }, vsLast(s, prev?.sets[j], ex) ?? fmtClock(s.at)),
             ),
             h('button', {
               class: 'sets__x',
@@ -237,13 +240,60 @@ function openEntry(ctx, a, entry, i, st) {
     : null;
 
   const form = inputForm(ctx, a, entry, i, ex, sug, d, lastSet);
-  return h('div', { class: 'entry__body' }, head, guide, logged, form, tools);
+  const strip = prev && ex.track !== 'cardio' ? lastTimeStrip(prev, entry.sets.length, ex, (set) => {
+    if (ex.track === 'time') d.secs = set.secs;
+    else {
+      d.w = set.w ?? d.w;
+      d.reps = set.reps ?? d.reps;
+    }
+    ctx.rerender();
+  }) : null;
+  return h('div', { class: 'entry__body' }, head, guide, logged, strip, form, tools);
+}
+
+/** "Last time · Mon, Nov 9" and one pill per set; the upcoming set is highlighted; a tap copies it into the steppers. */
+function lastTimeStrip(prev, nextIndex, ex, onPick) {
+  return h(
+    'div',
+    { class: 'lasttime' },
+    h('span', { class: 'lasttime__label muted small' }, `Last time · ${fmtDate(prev.date, { weekday: 'short', month: 'short', day: 'numeric' })}`),
+    h('div', { class: 'lasttime__pills' }, prev.sets.map((set, j) =>
+      h('button', {
+        class: `chip chip--btn mono${j === nextIndex ? ' chip--on' : ''}`,
+        type: 'button',
+        'aria-label': `Use set ${j + 1} from last time`,
+        onClick: () => onPick(set),
+      }, pillText(set, ex)),
+    )),
+  );
+}
+
+function pillText(set, ex) {
+  if (ex.track === 'time') return `${set.secs}s`;
+  if (ex.track === 'weight') return `${fmtW(set.w)}×${set.reps}`;
+  return `${set.reps}`;
+}
+
+/** "▲ +1 rep" etc. versus the same-numbered set last time, or null. */
+function vsLast(set, prevSet, ex) {
+  const c = compareSet(set, prevSet, ex);
+  return c && h('span', { class: `vs vs--${c.dir > 0 ? 'up' : c.dir < 0 ? 'down' : 'same'}` }, c.text);
 }
 
 function inputForm(ctx, a, entry, i, ex, sug, d, lastSet) {
   const n = entry.sets.length + 1;
   const log = (set) => {
+    const before = [...entry.sets];
     store.logSet(i, set);
+    // A record beaten right now: say so at once, and tag the set.
+    const st = store.getState();
+    const prs = setRecords(set, ex.id, st.sessions, before, st.profile.bodyweight);
+    if (prs.length) {
+      store.editSet(i, before.length, { pr: prs.map((p) => p.kind) });
+      const p = prs.find((x) => x.kind !== 'Estimated 1-rep max') ?? prs[0];
+      const unit = p.kind === 'Longest hold' ? ' s' : ' lb';
+      toast(`New record — ${p.kind.toLowerCase()}: ${p.value}${unit} (was ${p.was})`);
+    }
     const e = store.active().entries[i];
     const finishedEntry = e.sets.length >= e.target.sets;
     if (store.getState().prefs.autoRest && ex.track !== 'cardio' && e.target.rest) store.setRest(e.target.rest);

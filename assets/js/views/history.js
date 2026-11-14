@@ -122,7 +122,7 @@ function openSession(id, ctx, { editing = false, placeholders = [] } = {}) {
         return h('li', {},
           h('button', { class: 'linkish', type: 'button', onClick: () => { dialog.close(); ctx.go(`machine/${e.ex}`); } }, ex.name),
           e.plannedEx && e.plannedEx !== e.ex && h('span', { class: 'muted small' }, ` (instead of ${exerciseOr(e.plannedEx).name})`),
-          h('div', { class: 'mono small' }, e.sets.map((x) => setText(x, ex)).join(' · ')),
+          h('div', { class: 'mono small' }, e.sets.map((x) => `${setText(x, ex)}${x.pr?.length ? ' (PR)' : ''}`).join(' · ')),
         );
       })),
       (hs || wd.workout) && h('h3', { class: 'eyebrow' }, `Heart rate · ${wd.source === 'live' ? 'live Bluetooth' : 'Samsung Health'}`),
@@ -200,7 +200,7 @@ function openSession(id, ctx, { editing = false, placeholders = [] } = {}) {
               'aria-label': `Edit set ${j + 1}`,
               onClick: () => openSetEditor({ title: `Set ${j + 1} · ${ex.name}`, ex, set, onSave: (patch) => { store.editSessionSet(s.id, ei, j, patch); redraw(); } }),
             },
-              h('span', { class: 'sets__n' }, `Set ${j + 1}`),
+              h('span', { class: 'sets__n' }, `Set ${j + 1}`, set.pr?.length ? h('span', { class: 'tag tag--pr' }, 'PR') : null),
               h('span', { class: 'sets__v mono' }, setLabel(set, ex)),
               h('span', { class: 'sets__t muted small' }, set.at ? fmtClock(set.at) : ''),
             ),

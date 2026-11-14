@@ -166,7 +166,7 @@ export function renderToday(ctx) {
               : item.swappedFrom && h('span', { class: 'tag' }, 'swapped'),
         ),
         h('span', { class: 'preview__target' }, targetText({ sets: item.sets, reps: item.reps, secs: item.secs, miles: item.miles, minutes: item.minutes }, ex)),
-        sug?.text && ex.track !== 'cardio' && h('span', { class: `preview__sug${sug.up ? ' is-up' : ''}` }, sug.up ? `↑ ${sug.text}` : sug.text),
+        sug?.text && ex.track !== 'cardio' && h('span', { class: `preview__sug${sug.up ? ' is-up' : sug.deload ? ' is-deload' : ''}` }, sug.up ? `↑ ${sug.text}` : sug.deload ? `↓ ${sug.text} (deload)` : sug.text),
         note.where && h('span', { class: 'preview__where' }, `📍 ${note.where}`),
       );
     }),

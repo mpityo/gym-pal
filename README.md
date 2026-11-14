@@ -29,6 +29,10 @@ Save each gym you train at in **Setup → Gyms** (best done while standing in it
 
 It uses double progression, as described in the ACSM 2009 position stand. You stay at a weight until every set reaches the top of the rep range, then go up one step: 5 lb for most machines and 10 lb for leg press and squats. If any set falls below the bottom of the range, you stay at that weight. The first time you do an exercise, it asks you to find a weight you could do about two more reps with than the target.
 
+If you stall — three sessions in a row at the same top weight, none with every set at the top of the range, and no more total reps at that weight than three sessions ago — it suggests a deload instead (shown with ↓): about 10% lighter, rounded down to the machine's step, for clean sets at the top of the range. The normal rules then build you back up.
+
+While you log, the open exercise shows last time's sets as pills (the one for the set you're about to do is highlighted, and tapping one copies it into the steppers). Each logged set shows how it compares with the same set last time (▲ +1 rep, ▲ +5 lb, =, ▼ −2 reps). Beating a record (estimated 1-rep max, heaviest set, least assistance, longest hold) shows a toast immediately and tags the set **PR**; the first time you do an exercise never counts as a record.
+
 ### The rest timer
 
 The rest timer lives on the session, not on the Workout screen, so it alerts once wherever you are when it ends — even on Machines, Stats or History — and gives you a one-tap way back to the workout. If you come back long after it ended (say the phone was locked), it won't beep again; it just tells you how long ago it finished. −15/+15 change the time left without refilling the progress bar.
