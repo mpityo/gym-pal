@@ -1,7 +1,9 @@
-import { h, clear, toast, fmtSecs, alertDone, primeAudio } from './util.js';
+import { h, clear, toast, fmtSecs, alertDone, primeAudio, download } from './util.js';
 import * as store from './store.js';
 import * as hr from './hr.js';
 import * as ai from './ai.js';
+import { restStatus } from './metrics.js';
+import { exercise } from './data/exercises.js';
 import { renderToday } from './views/today.js';
 import { renderWorkout } from './views/workout.js';
 import { renderMachines, renderMachine } from './views/machines.js';
@@ -57,6 +59,7 @@ const ctx = {
 const app = document.getElementById('app');
 const tabs = document.getElementById('tabs');
 const topStatus = document.getElementById('top-status');
+const saveBanner = document.getElementById('save-banner');
 
 function parseHash() {
   const m = /^#\/([\w-]+)(?:\/([\w-]+))?/.exec(location.hash);
@@ -110,6 +113,49 @@ function renderTabs() {
   );
 }
 
+// ── Save-failure banner ───────────────────────────────────────────────────
+// Sticky, not a toast: a failed save means data is only in memory, so this
+// stays up until flush() succeeds, not until a timer runs out.
+
+function renderSaveBanner() {
+  const status = store.saveStatus();
+  clear(saveBanner);
+  saveBanner.hidden = status.ok;
+  if (status.ok) return;
+  const st = store.getState();
+  saveBanner.append(
+    h(
+      'div',
+      { class: 'save-banner__inner' },
+      h('p', {}, 'Could not save to this phone — storage is full. Export a backup now.'),
+      h(
+        'div',
+        { class: 'row row--wrap' },
+        h('button', {
+          class: 'btn btn--small save-banner__btn save-banner__btn--primary',
+          type: 'button',
+          onClick: () => {
+            download(`gym-pal-backup-${new Date().toISOString().slice(0, 10)}.json`, store.exportJson());
+            store.recordBackupExported();
+          },
+        }, 'Export backup'),
+        st.watch &&
+          h('button', {
+            class: 'btn btn--small btn--ghost save-banner__btn',
+            type: 'button',
+            onClick: () => {
+              store.setWatch(null);
+              store.flush();
+            },
+          }, 'Remove imported watch data'),
+      ),
+    ),
+  );
+}
+
+store.subscribe(renderSaveBanner);
+renderSaveBanner();
+
 function renderTopStatus() {
   const a = store.active();
   const bpm = hr.latest();
@@ -122,35 +168,76 @@ function renderTopStatus() {
 
 // ── Ticking clocks: elapsed time and the rest timer ──────────────────────
 
-let restWasRunning = false;
 setInterval(() => {
   for (const el of document.querySelectorAll('[data-elapsed]')) {
     const secs = (Date.now() - Number(el.dataset.elapsed)) / 1000;
     el.textContent = secs >= 3600 ? `${Math.floor(secs / 3600)}:${fmtSecs(secs % 3600).padStart(5, '0')}` : fmtSecs(secs);
   }
   const a = store.active();
+
+  // Alert decision: runs on any route, exactly once per rest timer.
+  if (a?.rest && !a.rest.alerted) {
+    const status = restStatus(a.rest);
+    if (status.state === 'due' || status.state === 'late') {
+      store.markRestAlerted();
+      if (status.state === 'due') {
+        if (store.getState().prefs.restAlert) alertDone();
+        toast('Rest is up — next set.', ctx.route !== 'workout' ? { action: 'Workout', onAction: () => ctx.go('workout') } : undefined);
+      } else {
+        toast(`Rest ended ${fmtSecs(status.overdue)} ago.`);
+      }
+      notifyRestEnded(a);
+    }
+  }
+
+  // Bar: just reflects the current state, Workout route only.
   const bar = document.getElementById('restbar');
   if (a?.rest && bar) {
-    const left = (a.rest.until - Date.now()) / 1000;
+    const status = restStatus(a.rest);
     const label = bar.querySelector('[data-rest-left]');
     const fill = bar.querySelector('.restbar__fill');
-    if (left > 0) {
-      restWasRunning = true;
+    if (status.state === 'running') {
       bar.hidden = false;
-      if (label) label.textContent = fmtSecs(left);
-      if (fill) fill.style.width = `${Math.max(0, (left / a.rest.total) * 100)}%`;
+      if (label) label.textContent = fmtSecs(status.left);
+      if (fill) fill.style.width = `${Math.max(0, (status.left / a.rest.total) * 100)}%`;
     } else {
       if (label) label.textContent = 'Go';
       if (fill) fill.style.width = '0%';
       bar.classList.add('is-done');
-      if (restWasRunning) {
-        restWasRunning = false;
-        if (store.getState().prefs.restAlert) alertDone();
-        toast('Rest is up — next set.');
-      }
     }
   }
 }, 500);
+
+/** Best-effort background notification when rest ends out of sight. */
+async function notifyRestEnded(a) {
+  try {
+    if (document.visibilityState === 'visible') return;
+    if (!store.getState().prefs.restNotify) return;
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    const entry = a.entries[a.current];
+    const ex = entry && exercise(entry.ex);
+    const reg = await navigator.serviceWorker.ready;
+    await reg.showNotification('Rest is up', {
+      body: ex ? `Next: ${ex.name}` : 'Time for the next set.',
+      tag: 'gym-pal-rest',
+      renotify: true,
+      vibrate: [200, 100, 200],
+    });
+  } catch {
+    /* notifications unsupported or blocked — the toast/beep already covered it */
+  }
+}
+
+/** Dismiss any pending rest notification once the app is back in view. */
+async function closeRestNotifications() {
+  try {
+    if (!('Notification' in window) || !('serviceWorker' in navigator)) return;
+    const reg = await navigator.serviceWorker.ready;
+    for (const n of await reg.getNotifications({ tag: 'gym-pal-rest' })) n.close();
+  } catch {
+    /* nothing to close */
+  }
+}
 
 // ── Live heart rate ──────────────────────────────────────────────────────
 
@@ -189,7 +276,10 @@ async function wakeLock(on) {
   }
 }
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') wakeLock(ctx.route === 'workout' && store.getState().prefs.keepAwake);
+  if (document.visibilityState === 'visible') {
+    wakeLock(ctx.route === 'workout' && store.getState().prefs.keepAwake);
+    closeRestNotifications();
+  }
 });
 
 document.addEventListener('pointerdown', primeAudio, { once: true });

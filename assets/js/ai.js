@@ -129,7 +129,7 @@ function recordUsage(model, u) {
  * request never leaves. The name is a fair warning: it is only acceptable here
  * because the key is per-device, typed in by its owner, and never committed.
  */
-async function call({ model, system, prompt, messages, schema, maxTokens = 1024, signal }) {
+async function call({ model, system, prompt, messages, schema, maxTokens = 1024, effort, allowTruncated, signal }) {
   const key = getKey();
   if (!key) throw new AiError('no-key', 'No Claude key on this device.');
 
@@ -139,8 +139,10 @@ async function call({ model, system, prompt, messages, schema, maxTokens = 1024,
     system,
     messages: messages ?? [{ role: 'user', content: prompt }],
   };
-  if (schema) {
-    body.output_config = { format: { type: 'json_schema', schema } };
+  if (schema || effort) {
+    body.output_config = {};
+    if (effort) body.output_config.effort = effort;
+    if (schema) body.output_config.format = { type: 'json_schema', schema };
   }
 
   let response;
@@ -166,7 +168,20 @@ async function call({ model, system, prompt, messages, schema, maxTokens = 1024,
   const data = await response.json();
   recordUsage(model, data.usage);
 
-  if (data.stop_reason === 'max_tokens') {
+  return readResponse(data, { schema, allowTruncated });
+}
+
+/**
+ * Turns a Messages API response body into the value callers want, or throws
+ * an AiError. Pure — no fetch, no storage — so it can be unit tested without
+ * a network. Order matters: a refusal or a truncation must be caught before
+ * `content` is read as an answer.
+ */
+export function readResponse(data, { schema, allowTruncated } = {}) {
+  if (data.stop_reason === 'refusal') {
+    throw new AiError('refused', 'Claude declined to answer that. Try rephrasing.');
+  }
+  if (data.stop_reason === 'max_tokens' && !allowTruncated) {
     throw new AiError('truncated', 'Claude ran out of room before finishing.');
   }
 
@@ -174,6 +189,10 @@ async function call({ model, system, prompt, messages, schema, maxTokens = 1024,
     .filter((block) => block.type === 'text')
     .map((block) => block.text)
     .join('');
+
+  if (!text) {
+    throw new AiError('empty', 'Claude sent an empty reply — try again.');
+  }
 
   if (!schema) return text;
   try {
@@ -219,7 +238,9 @@ export async function testKey() {
     model: MODELS.quick,
     system: 'Reply with the single word OK.',
     prompt: 'ping',
-    maxTokens: 8,
+    maxTokens: 64,
+    effort: 'low',
+    allowTruncated: true,
   });
   return true;
 }
@@ -249,7 +270,7 @@ export async function coach(history, context, { signal } = {}) {
     { role: 'assistant', content: 'Got it. What do you need?' },
     ...history,
   ];
-  return call({ model: MODELS.coach, system: COACH_SYSTEM, messages, maxTokens: 900, signal });
+  return call({ model: MODELS.coach, system: COACH_SYSTEM, messages, maxTokens: 4000, effort: 'low', signal });
 }
 
 // ── Machine from a photo ─────────────────────────────────────────────────
@@ -291,7 +312,8 @@ export async function identifyMachine(base64, mediaType, library, { signal } = {
       },
     ],
     schema,
-    maxTokens: 1200,
+    maxTokens: 4000,
+    effort: 'low',
     signal,
   });
 }
@@ -325,7 +347,8 @@ export async function weeklyRead(facts, { signal } = {}) {
     system: READ_SYSTEM,
     prompt: `Here is the week. Write the read.\n\n${JSON.stringify(facts, null, 1)}`,
     schema: READ_SCHEMA,
-    maxTokens: 1200,
+    maxTokens: 4000,
+    effort: 'low',
     signal,
   });
 }
