@@ -6,7 +6,7 @@ import { PLAN_BY_ID } from '../data/plans.js';
 import {
   suggest, sessionSummary, newRecords, comparison, hrSummary, maxHr, fmtW, fmtLb, fmtDuration, fmtMinutes, fmtPace, parseClock, parseAmount,
 } from '../metrics.js';
-import { targetText, openSwap, openHowTo, openExercisePicker, pickGym, gymName, exerciseThumb } from './common.js';
+import { crowdChips, targetText, openSwap, openHowTo, openExercisePicker, pickGym, gymName, exerciseThumb } from './common.js';
 import { zoneBar } from '../charts.js';
 
 /** Typed-but-not-logged values, so a re-render does not wipe them. */
@@ -165,8 +165,10 @@ function openEntry(ctx, a, entry, i, st) {
               title: 'Machine taken or missing?',
               allowPermanent: entry.planIndex != null && a.planId,
               planName: PLAN_BY_ID[a.planId]?.name,
-              onPick: (id, { always }) => {
-                store.swapExercise(i, id);
+              askReason: true,
+              onPick: (id, { always, reason, markMissing }) => {
+                if (markMissing) store.setMachineNote(entry.ex, { missing: true }, a.gymId ?? store.currentGym());
+                store.swapExercise(i, id, reason);
                 if (always && a.planId && entry.planIndex != null) store.setPermanentSwap(a.planId, entry.planIndex, id);
                 delete draft[a.id + i];
                 toast(`Swapped to ${exerciseOr(id).name}`);
@@ -417,6 +419,9 @@ function finish(ctx) {
       hrs && h('h3', { class: 'eyebrow' }, 'Heart rate'),
       hrs && h('p', {}, `Average ${hrs.avg} bpm, peak ${hrs.max} bpm.`),
       hrs?.zones && zoneBar(hrs.zones),
+      h('h3', { class: 'eyebrow' }, 'How busy was the gym?'),
+      crowdChips(s.crowd, (v) => store.updateSession(s.id, { crowd: v ?? undefined })),
+      h('p', { class: 'muted small' }, 'Optional. A few ratings build your own quiet-times chart in Stats.'),
       h('p', { class: 'muted small' }, 'Next session the app will suggest weights from what you just did.'),
     ),
   );

@@ -1,6 +1,7 @@
 import { h, modal, toast, download, fmtRel, fmtDate, pluralize } from '../util.js';
 import * as store from '../store.js';
 import * as photos from '../photos.js';
+import { mapsLink } from '../gyms.js';
 import * as ai from '../ai.js';
 import * as hr from '../hr.js';
 import { readFiles, buildWatch } from '../samsung.js';
@@ -261,6 +262,7 @@ function gymsCard(st, ctx) {
     st.gyms.length > 0 && h('ul', { class: 'plain' }, st.gyms.map((g) =>
       h('li', { class: 'row' },
         h('span', {}, `📍 ${g.name}`, g.chain && h('span', { class: 'muted small' }, ` · ${g.chain}`), g.lat == null && h('span', { class: 'muted small' }, ' (no location)')),
+        h('a', { class: 'small', href: mapsLink(g), target: '_blank', rel: 'noopener', title: 'Popular times on Google Maps (leaves the app)' }, 'Popular times ↗'),
         h('button', { class: 'linkish small', type: 'button', onClick: () => editGym(g.id, ctx) }, 'Edit'),
       ),
     )),

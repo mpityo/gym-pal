@@ -5,9 +5,11 @@ import { exerciseOr, MUSCLES, MUSCLE_ORDER } from '../data/exercises.js';
 import {
   totals, comparison, weekly, weekStreak, muscleSets, weekStart, addDays, machineUsage, exerciseHistory, exerciseRecords,
   e1rm, calendar, runs, sessionSummary, hrSummary, maxHr, fmtLb, fmtDuration, fmtPace, fmtW, swapCounts, dayKey,
+  crowdGrid, crowdScore, crowdLabel, crowdEstimated, quietTimes, busyTimes, fmtDayHour, fmtHour, CROWD_LABELS,
 } from '../metrics.js';
+import { mapsLink } from '../gyms.js';
 import { watchForSession } from '../samsung.js';
-import { bars, hbars, split, heatmap, sparkline, zoneBar } from '../charts.js';
+import { bars, hbars, split, heatmap, sparkline, zoneBar, crowdHeat } from '../charts.js';
 import { empty } from './common.js';
 
 let readCache = null;
@@ -198,6 +200,8 @@ export function renderStats(ctx) {
       heatmap(calendar(sessions, bw), { weeks: 16, now }),
     ),
 
+    crowdCard(st, sessions),
+
     // Cardio
     runList.length > 0 &&
       h(
@@ -219,6 +223,67 @@ function balanceNote(p) {
   const ratio = push / pull;
   const txt = ratio > 1.3 ? 'You have pushed noticeably more than you have pulled. Rows, pulldowns and rear-delt work balance the shoulders.' : ratio < 0.77 ? 'More pulling than pushing so far.' : 'Pushing and pulling are roughly balanced.';
   return h('p', { class: 'muted small' }, `Push : pull = ${ratio.toFixed(2)}. ${txt}`);
+}
+
+// ── When your gym is quiet (spec 10) ────────────────────────────────────
+
+let crowdGym; // the gym picked in the card, kept across renders
+
+/** Gyms (including "no gym", as null) with at least 3 rated sessions, most rated first. */
+function ratedGyms(sessions) {
+  const counts = new Map();
+  for (const s of sessions) if (s.crowd) counts.set(s.gymId ?? null, (counts.get(s.gymId ?? null) ?? 0) + 1);
+  return [...counts.entries()].filter(([, n]) => n >= 3).sort((a, b) => b[1] - a[1]).map(([id]) => id);
+}
+
+function mapsAnchor(g) {
+  const url = mapsLink(g);
+  return url && h('a', { href: url, target: '_blank', rel: 'noopener', class: 'small' }, 'Popular times on Google Maps ↗ (leaves the app)');
+}
+
+function crowdCard(st, sessions) {
+  const gyms = ratedGyms(sessions);
+  const title = h('h2', { class: 'card__title' }, 'When your gym is quiet');
+  const cur = store.currentGym();
+  if (!gyms.length) {
+    const rated = sessions.filter((s) => s.crowd).length;
+    return h('section', { class: 'card' }, title,
+      h('p', { class: 'muted' }, rated ? `Rate a few more workouts to see this (${rated} of 3 rated so far at one gym).` : 'Rate how busy the gym was when you finish a workout (or later, in History), and after 3 ratings this shows when your gym is quiet for you.'),
+      cur && mapsAnchor(store.gym(cur)),
+    );
+  }
+  if (crowdGym === undefined || !gyms.includes(crowdGym)) crowdGym = gyms.includes(cur) ? cur : gyms[0];
+  const gid = crowdGym;
+  const grid = crowdGrid(sessions, gid);
+  const used = [];
+  for (let hr = 0; hr < 24; hr++) if (grid.cells.some((row) => row[hr].visits)) used.push(hr);
+  const hours = [];
+  for (let hr = Math.max(0, used[0] - 1); hr <= Math.min(23, used[used.length - 1] + 1); hr++) hours.push(hr);
+  const detail = h('p', { class: 'muted small' }, 'Tap a square for details.');
+  const onCell = (day, hr, cell) => {
+    const sc = crowdScore(cell);
+    const parts = [`${fmtDayHour(day, hr)}–${fmtHour(hr + 1)}: ${cell.visits} visit${cell.visits === 1 ? '' : 's'}`];
+    parts.push(crowdEstimated(cell) ? `no ratings, guessed ${crowdLabel(sc)} from swaps` : `usually ${crowdLabel(sc)}`);
+    if (cell.takenVisits) parts.push(`a machine was taken in ${cell.takenVisits} of ${cell.visits}`);
+    detail.textContent = `${parts.join(', ')}.`;
+  };
+  const quiet = quietTimes(grid, { limit: 2 });
+  const busy = busyTimes(grid, { limit: 1 });
+  const name = (id) => (id ? store.gym(id)?.name ?? 'Removed gym' : 'No gym');
+  return h('section', { class: 'card' },
+    title,
+    gyms.length > 1 && h('div', { class: 'row row--wrap' }, gyms.map((id) =>
+      h('button', { class: `chip chip--btn${id === gid ? ' chip--on' : ''}`, type: 'button', onClick: (e) => { crowdGym = id; e.currentTarget.closest('.card').replaceWith(crowdCard(st, sessions)); } }, name(id)))),
+    gyms.length === 1 && h('p', { class: 'muted small' }, name(gid)),
+    crowdHeat(grid, { hours, score: crowdScore, onCell, label: (hr) => fmtHour(hr).replace(' am', 'a').replace(' pm', 'p') }),
+    h('div', { class: 'crowd__legend' }, CROWD_LABELS.map((l, i) => h('span', {}, h('span', { class: `crowd__cell c${i + 1}` }), l))),
+    detail,
+    quiet.length > 0 && h('p', {}, h('strong', {}, 'Quietest for you: '), quiet.map((q) => fmtDayHour(q.day, q.hour)).join(', ')),
+    busy.length > 0 && h('p', {}, h('strong', {}, 'Busiest: '), busy.map((q) => fmtDayHour(q.day, q.hour)).join(', ')),
+    !quiet.length && h('p', { class: 'muted small' }, 'Quietest and busiest times show once an hour has 2 or more visits.'),
+    h('p', { class: 'muted small' }, 'From your own ratings and "machine taken" swaps. Faded squares have no rating yet.'),
+    gid && mapsAnchor(store.gym(gid)),
+  );
 }
 
 function stat(value, label) {

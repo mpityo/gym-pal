@@ -378,12 +378,14 @@ export function editSet(entryIndex, setIndex, patch) {
   });
 }
 
-export function swapExercise(entryIndex, exId) {
+/** reason: 'taken' | 'missing' | 'prefer' — why it was swapped (feeds the busy-times history). */
+export function swapExercise(entryIndex, exId, reason) {
   update((s) => {
     const entry = s.active?.entries[entryIndex];
     if (entry && exercise(exId)) {
       entry.ex = exId;
       entry.picked = true;
+      if (['taken', 'missing', 'prefer'].includes(reason)) entry.swapReason = reason;
       delete entry.autoSwap;
       delete entry.unavailable;
     }

@@ -639,3 +639,132 @@ export function fmtDuration(min) {
 }
 
 export { DAY, addDays };
+
+// ── Busy times (spec 10) ─────────────────────────────────────────────────
+// Your own history of how busy each gym was: one optional 1–5 rating per
+// workout, plus how often you had to swap because a machine was taken.
+
+export const CROWD_LABELS = ['Empty', 'Quiet', 'Normal', 'Busy', 'Packed'];
+export const WEEKDAY_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+/** '6 am', '12 pm', '7 pm'. */
+export function fmtHour(hour) {
+  const h = ((hour % 24) + 24) % 24;
+  const n = h % 12 === 0 ? 12 : h % 12;
+  return `${n} ${h < 12 ? 'am' : 'pm'}`;
+}
+
+/** 'Mon 6 pm' (day: Mon = 0). */
+export function fmtDayHour(day, hour) {
+  return `${WEEKDAY_SHORT[day]} ${fmtHour(hour)}`;
+}
+
+/** The word for a 1–5 score, e.g. 3.6 → 'Busy'. */
+export function crowdLabel(score) {
+  if (score == null) return null;
+  return CROWD_LABELS[Math.min(5, Math.max(1, Math.round(score))) - 1];
+}
+
+const emptyCell = () => ({ visits: 0, rated: 0, sum: 0, avg: null, taken: 0, takenVisits: 0, takenPerVisit: 0 });
+
+/**
+ * Per weekday (Mon = 0) and hour (0–23): visits, average crowd rating, and
+ * "taken" swaps per visit. A session counts as a visit in every clock hour
+ * it overlaps (17:40–18:50 → 17 and 18), in local time. gymId null = the
+ * sessions logged with no gym.
+ */
+export function crowdGrid(sessions, gymId) {
+  const cells = Array.from({ length: 7 }, () => Array.from({ length: 24 }, emptyCell));
+  let totalRated = 0;
+  for (const s of sessions ?? []) {
+    if ((s.gymId ?? null) !== (gymId ?? null) || typeof s.startedAt !== 'number') continue;
+    const rating = Number.isInteger(s.crowd) && s.crowd >= 1 && s.crowd <= 5 ? s.crowd : null;
+    if (rating) totalRated += 1;
+    const taken = (s.entries ?? []).filter((e) => e?.swapReason === 'taken').length;
+    const end = typeof s.endedAt === 'number' && s.endedAt > s.startedAt ? s.endedAt : s.startedAt + 1;
+    const slot = new Date(s.startedAt);
+    slot.setMinutes(0, 0, 0);
+    // Guard against bad data: never walk more than a day of hours.
+    for (let i = 0; slot.getTime() < end && i < 24; i++) {
+      const c = cells[(slot.getDay() + 6) % 7][slot.getHours()];
+      c.visits += 1;
+      c.taken += taken;
+      if (taken) c.takenVisits += 1;
+      if (rating) {
+        c.rated += 1;
+        c.sum += rating;
+      }
+      slot.setHours(slot.getHours() + 1);
+    }
+  }
+  for (const row of cells) {
+    for (const c of row) {
+      c.avg = c.rated ? c.sum / c.rated : null;
+      c.takenPerVisit = c.visits ? c.taken / c.visits : 0;
+    }
+  }
+  return { cells, totalRated };
+}
+
+/**
+ * One 1–5 score per cell: the average rating, nudged up by "taken" swaps.
+ * Cells with visits but no rating get an estimate from swaps alone (see
+ * crowdEstimated). null when there were no visits.
+ */
+export function crowdScore(cell) {
+  if (!cell?.visits) return null;
+  if (cell.rated) return Math.min(5, cell.avg + Math.min(1, cell.takenPerVisit * 0.5));
+  return Math.min(5, 2.5 + Math.min(2, cell.takenPerVisit));
+}
+
+/** True when crowdScore() is only an estimate (no ratings in that cell). */
+export function crowdEstimated(cell) {
+  return !!cell?.visits && !cell.rated;
+}
+
+function rankedCells(grid, minVisits) {
+  const out = [];
+  grid.cells.forEach((row, day) =>
+    row.forEach((c, hour) => {
+      if (c.visits >= minVisits) out.push({ day, hour, score: crowdScore(c), visits: c.visits });
+    }),
+  );
+  return out;
+}
+
+/** The quietest times, only from cells with at least 2 visits. Ties go to more visits. */
+export function quietTimes(grid, { limit = 3 } = {}) {
+  return rankedCells(grid, 2).sort((a, b) => a.score - b.score || b.visits - a.visits).slice(0, limit);
+}
+
+/** The busiest times, only from cells with at least 2 visits. Ties go to more visits. */
+export function busyTimes(grid, { limit = 3 } = {}) {
+  return rankedCells(grid, 2).sort((a, b) => b.score - a.score || b.visits - a.visits).slice(0, limit);
+}
+
+/**
+ * Today's one-line hint for the plan card, or null when there is no data
+ * for this weekday within an hour of now.
+ * "Mondays around 6 pm have been Busy for you (3 visits). Quieter: Mon 8 pm."
+ */
+export function crowdHint(grid, now = Date.now()) {
+  const d = new Date(now);
+  const day = (d.getDay() + 6) % 7;
+  const hour = d.getHours();
+  const near = [hour, hour - 1, hour + 1]
+    .filter((x) => x >= 0 && x < 24)
+    .map((x) => ({ hour: x, cell: grid.cells[day][x] }))
+    .filter((x) => x.cell.visits > 0);
+  if (!near.length) return null;
+  const best = near.reduce((a, b) => (b.cell.visits > a.cell.visits ? b : a));
+  const score = crowdScore(best.cell);
+  const word = crowdLabel(score);
+  const days = ['Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays', 'Sundays'][day];
+  const n = best.cell.visits;
+  let text = `${days} around ${fmtHour(best.hour)} have ${crowdEstimated(best.cell) ? 'looked' : 'been'} ${word} for you (${n} visit${n === 1 ? '' : 's'}).`;
+  const quieter = rankedCells(grid, 2)
+    .filter((c) => c.day === day && c.hour !== best.hour && c.score < score - 0.5)
+    .sort((a, b) => a.score - b.score || b.visits - a.visits)[0];
+  if (quieter) text += ` Quieter: ${fmtDayHour(quieter.day, quieter.hour)}.`;
+  return { text, score, hour: best.hour, visits: n };
+}

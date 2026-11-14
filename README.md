@@ -45,6 +45,14 @@ Every figure is calculated in `assets/js/metrics.js` and covered by tests in `te
 - **Heart-rate zones** use 50–60–70–80–90% of max heart rate. Max heart rate is 208 − 0.7 × age (Tanaka 2001) unless you enter your own.
 - **Comparisons** use approximate weights: a concert grand piano is about 990 lb, an average new car about 4,300 lb, an African elephant about 13,000 lb, an empty 737 about 91,300 lb, a blue whale about 300,000 lb and the Statue of Liberty about 450,000 lb.
 
+### Busy times
+
+When you finish a workout you can tap how busy the gym was (Empty · Quiet · Normal · Busy · Packed). You can also set or change it later in History. When you swap an exercise mid-workout, the app asks why (**Taken** · **Not here** · **Prefer this**, defaulting to Taken), and "Not here" can also mark the machine as missing at this gym.
+
+Stats → **When your gym is quiet** turns that into a weekday × hour grid for each gym, once a gym has 3 rated workouts. A workout counts in every clock hour it overlaps, and machine-taken swaps nudge a square towards busy. Below the grid it lists your quietest and busiest times. Today adds one line when you have history for this weekday within an hour of now.
+
+This is only your own history; nothing is shared or fetched. There is no free, official feed of gym busyness: Google does not offer "Popular times" through an API, and gym chains do not publish occupancy. So Stats and Setup → Gyms link to the gym on Google Maps, which shows Google's own Popular times when it has them.
+
 ## Galaxy Watch
 
 A web page can't read Samsung Health directly. Samsung has no web API, and Health Connect only works for native Android apps. You get your watch data in two ways:

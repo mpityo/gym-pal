@@ -87,3 +87,14 @@ export function gymsByRecent(state) {
     .sort((a, b) => b[1] - a[1] || a[2] - b[2])
     .map(([g]) => g);
 }
+
+/**
+ * A Google Maps search for the gym, which shows its "Popular times" when
+ * Google has them. Uses the name plus the address, or plus lat,lng when
+ * there is no address.
+ */
+export function mapsLink(gym) {
+  if (!gym) return null;
+  const where = gym.address ? ` ${gym.address}` : gym.lat != null && gym.lng != null ? ` ${gym.lat},${gym.lng}` : '';
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${gym.name ?? ''}${where}`.trim())}`;
+}
