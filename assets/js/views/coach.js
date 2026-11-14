@@ -1,14 +1,17 @@
 import { h, modal } from '../util.js';
 import * as store from '../store.js';
 import * as ai from '../ai.js';
-import { EXERCISES, MUSCLES, exercise } from '../data/exercises.js';
+import { EXERCISES, MUSCLES, exerciseOr } from '../data/exercises.js';
 import { PLAN_BY_ID } from '../data/plans.js';
 import { suggest, exerciseRecords, muscleSets, weekStart, addDays, sessionSummary, dayKey } from '../metrics.js';
 import { targetText } from './common.js';
+import { todayPlan } from './today.js';
 
 /** Conversation survives closing the sheet, cleared when a workout ends. */
 let history = [];
 let historyFor = null;
+/** The message from the last failed send, cleared at the start of the next one. */
+let lastError = null;
 
 function context(extra = {}) {
   const st = store.getState();
@@ -16,26 +19,30 @@ function context(extra = {}) {
   const a = st.active;
   const wk = weekStart(Date.now());
   const ms = muscleSets(st.sessions, wk, addDays(wk, 7));
-  const about = extra.about ? exercise(extra.about) : null;
+  const about = extra.about ? exerciseOr(extra.about) : null;
+  const tp = !a ? todayPlan(st) : null;
+  const gid = store.currentGym();
+  const g = gid && store.gym(gid);
   return {
     profile: { bodyweightLb: bw, age: st.profile.age },
+    gym: g ? { name: g.name, chain: g.chain || undefined, missingHere: store.missingAt(gid) } : null,
     plan: st.prefs.mode === '3day' ? '3-day full body' : '4-day upper/lower (Mon Upper A, Tue Lower A, Thu Upper B, Fri Lower B)',
-    askingAbout: about ? { id: about.id, name: about.name, setup: about.setup, cues: about.cues, alternatives: about.alts.map((x) => exercise(x).name), myNotes: store.machineNote(about.id), records: exerciseRecords(st.sessions, about.id, bw) } : undefined,
+    askingAbout: about ? { id: about.id, name: about.name, setup: about.setup, cues: about.cues, alternatives: about.alts.map((x) => exerciseOr(x).name), myNotes: store.machineNote(about.id), records: exerciseRecords(st.sessions, about.id, bw) } : undefined,
     workoutInProgress: a
       ? {
           plan: a.name,
           minutesIn: Math.round((Date.now() - a.startedAt) / 60000),
-          current: exercise(a.entries[a.current]?.ex)?.name,
+          current: a.entries[a.current] ? exerciseOr(a.entries[a.current].ex).name : undefined,
           exercises: a.entries.map((e) => ({
-            name: exercise(e.ex).name,
-            target: targetText(e.target, exercise(e.ex)),
+            name: exerciseOr(e.ex).name,
+            target: targetText(e.target, exerciseOr(e.ex)),
             logged: e.sets,
             suggestion: suggest(e.ex, e.target, st.sessions, bw)?.reason,
-            swappedFrom: e.plannedEx !== e.ex ? exercise(e.plannedEx).name : undefined,
+            swappedFrom: e.plannedEx !== e.ex ? exerciseOr(e.plannedEx).name : undefined,
           })),
         }
       : null,
-    nextPlanned: !a ? PLAN_BY_ID[st.prefs.mode === '3day' ? 'full-a' : 'upper-a']?.name : undefined,
+    nextPlanned: tp ? { name: PLAN_BY_ID[tp.planId].name, when: tp.label, restDay: tp.rest, doneThisWeek: tp.weekDone, weeklyTarget: tp.weekTarget } : undefined,
     thisWeekSetsPerMuscle: Object.fromEntries(Object.entries(ms.sets).filter(([, v]) => v > 0).map(([k, v]) => [MUSCLES[k], v])),
     recentWorkouts: st.sessions.slice(-6).map((s) => ({ date: dayKey(s.startedAt), plan: s.name, ...pick(sessionSummary(s, bw)), notes: s.notes || undefined })),
     library: EXERCISES.map((e) => ({ id: e.id, name: e.name, primary: e.muscles.primary, alts: e.alts })),
@@ -51,6 +58,7 @@ export function openCoach(ctx, extra = {}) {
   if (historyFor !== key) {
     history = [];
     historyFor = key;
+    lastError = null;
   }
   const log = h('div', { class: 'chat' });
   const draw = () => {
@@ -58,14 +66,16 @@ export function openCoach(ctx, extra = {}) {
       ...(history.length
         ? history.map((m) => h('div', { class: `chat__msg chat__msg--${m.role}` }, m.content))
         : [h('p', { class: 'muted small' }, 'Ask anything: "leg press is taken, what now?", "is my seat right if I feel it in my shoulders?", "how heavy should I go on lat pulldown?"')]),
+      ...(lastError ? [h('p', { class: 'chat__error', role: 'alert' }, lastError)] : []),
     );
     log.scrollTop = log.scrollHeight;
   };
-  const input = h('textarea', { class: 'input', rows: 2, placeholder: extra.about ? `About ${exercise(extra.about).name}…` : 'Ask the coach…' });
+  const input = h('textarea', { class: 'input', rows: 2, placeholder: extra.about ? `About ${exerciseOr(extra.about).name}…` : 'Ask the coach…' });
   const send = h('button', { class: 'btn btn--primary', type: 'button' }, 'Send');
   const go = async () => {
     const text = input.value.trim();
     if (!text) return;
+    lastError = null;
     input.value = '';
     history.push({ role: 'user', content: text });
     draw();
@@ -78,7 +88,7 @@ export function openCoach(ctx, extra = {}) {
     } catch (err) {
       history.pop();
       input.value = text;
-      log.append(h('p', { class: 'muted small' }, err.message));
+      lastError = err.message;
     } finally {
       send.disabled = false;
       draw();

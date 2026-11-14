@@ -2,9 +2,9 @@
  * The exercise library.
  *
  * Every machine, cable move, free-weight lift and cardio piece the plans use,
- * plus the swaps for each. Written for a big-box gym (LA Fitness carries Life
- * Fitness, Hammer Strength, Matrix and Precor kit), so `look` describes what to
- * look for on the floor rather than a brand.
+ * plus the swaps for each. Written for any commercial gym (most carry kit from
+ * Life Fitness, Hammer Strength, Matrix, Precor and the like), so `look`
+ * describes what to look for on the floor rather than a brand.
  *
  * Fields
  *   pattern   push | pull | legs | core | cardio — drives the pushed/pulled split
@@ -812,6 +812,27 @@ export const BY_ID = Object.fromEntries(EXERCISES.map((e) => [e.id, e]));
 
 export function exercise(id) {
   return BY_ID[id] ?? null;
+}
+
+/** Never null: a placeholder keeps old sessions readable if an id disappears from the library. */
+export function exerciseOr(id) {
+  return (
+    BY_ID[id] ?? {
+      id,
+      name: `Unknown exercise (${id})`,
+      unknown: true,
+      pattern: 'other',
+      track: 'weight',
+      load: 'stack',
+      step: 5,
+      muscles: { primary: [], secondary: [] },
+      look: '',
+      setup: [],
+      cues: [],
+      mistakes: [],
+      alts: [],
+    }
+  );
 }
 
 /** Samsung Health exercise_type codes (developer.samsung.com, Predefined Exercise Type). */
