@@ -1,4 +1,4 @@
-import { h, clear, toast, fmtSecs, alertDone, primeAudio } from './util.js';
+import { h, clear, toast, fmtSecs, alertDone, primeAudio, download } from './util.js';
 import * as store from './store.js';
 import * as hr from './hr.js';
 import * as ai from './ai.js';
@@ -57,6 +57,7 @@ const ctx = {
 const app = document.getElementById('app');
 const tabs = document.getElementById('tabs');
 const topStatus = document.getElementById('top-status');
+const saveBanner = document.getElementById('save-banner');
 
 function parseHash() {
   const m = /^#\/([\w-]+)(?:\/([\w-]+))?/.exec(location.hash);
@@ -109,6 +110,49 @@ function renderTabs() {
       }),
   );
 }
+
+// ── Save-failure banner ───────────────────────────────────────────────────
+// Sticky, not a toast: a failed save means data is only in memory, so this
+// stays up until flush() succeeds, not until a timer runs out.
+
+function renderSaveBanner() {
+  const status = store.saveStatus();
+  clear(saveBanner);
+  saveBanner.hidden = status.ok;
+  if (status.ok) return;
+  const st = store.getState();
+  saveBanner.append(
+    h(
+      'div',
+      { class: 'save-banner__inner' },
+      h('p', {}, 'Could not save to this phone — storage is full. Export a backup now.'),
+      h(
+        'div',
+        { class: 'row row--wrap' },
+        h('button', {
+          class: 'btn btn--small save-banner__btn save-banner__btn--primary',
+          type: 'button',
+          onClick: () => {
+            download(`gym-pal-backup-${new Date().toISOString().slice(0, 10)}.json`, store.exportJson());
+            store.recordBackupExported();
+          },
+        }, 'Export backup'),
+        st.watch &&
+          h('button', {
+            class: 'btn btn--small btn--ghost save-banner__btn',
+            type: 'button',
+            onClick: () => {
+              store.setWatch(null);
+              store.flush();
+            },
+          }, 'Remove imported watch data'),
+      ),
+    ),
+  );
+}
+
+store.subscribe(renderSaveBanner);
+renderSaveBanner();
 
 function renderTopStatus() {
   const a = store.active();

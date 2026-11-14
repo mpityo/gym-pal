@@ -1,4 +1,4 @@
-import { h, toast, download, fmtRel, fmtDate } from '../util.js';
+import { h, toast, download, fmtRel, fmtDate, pluralize } from '../util.js';
 import * as store from '../store.js';
 import * as ai from '../ai.js';
 import * as hr from '../hr.js';
@@ -51,10 +51,28 @@ export function renderSetup(ctx) {
     h('section', { class: 'card' },
       h('h2', { class: 'card__title' }, 'Your data'),
       h('p', { class: 'muted small' }, 'Everything is stored in this browser on this phone. Export a backup to move it to a new phone. The Claude key is never included.'),
+      h('p', { class: 'muted small' }, `Using ${(store.storageEstimate().bytes / 1e6).toFixed(1)} MB of about 5 MB.`),
       h('div', { class: 'row row--wrap' },
-        h('button', { class: 'btn', type: 'button', onClick: () => download(`gym-pal-backup-${new Date().toISOString().slice(0, 10)}.json`, store.exportJson()) }, 'Export backup'),
+        h('button', {
+          class: 'btn',
+          type: 'button',
+          onClick: () => {
+            download(`gym-pal-backup-${new Date().toISOString().slice(0, 10)}.json`, store.exportJson());
+            store.recordBackupExported();
+            ctx.rerender();
+          },
+        }, 'Export backup'),
         importButton(ctx),
-        h('button', { class: 'btn btn--danger-ghost', type: 'button', onClick: () => { if (confirm('Erase every workout, note and import on this phone?')) { store.replaceState(store.defaultState()); ctx.rerender(); } } }, 'Erase everything'),
+        h('button', {
+          class: 'btn btn--danger-ghost',
+          type: 'button',
+          onClick: () => {
+            if (!confirm('Erase every workout, note and import on this phone?')) return;
+            const { savedPrev } = store.eraseAll();
+            toast('Everything erased', savedPrev ? { action: 'Undo', onAction: () => { store.restorePrevious(); ctx.rerender(); } } : undefined);
+            ctx.rerender();
+          },
+        }, 'Erase everything'),
       ),
     ),
     h('p', { class: 'muted small center' }, 'Gym Pal · not medical advice. Stop any exercise that causes pain.'),
@@ -73,12 +91,34 @@ function importButton(ctx) {
   const file = h('input', {
     type: 'file', accept: 'application/json,.json', hidden: true,
     onChange: async (e) => {
+      const input = e.target;
       try {
-        store.importJson(await e.target.files[0].text());
-        toast('Backup restored');
+        const chosen = input.files[0];
+        if (!chosen) return;
+        const text = await chosen.text();
+        const result = store.validateBackup(text);
+        if (!result.ok) {
+          toast(result.error);
+          return;
+        }
+
+        const cur = store.getState();
+        const curLast = cur.sessions.length ? fmtDate(cur.sessions[cur.sessions.length - 1].startedAt, { month: 'short', day: 'numeric' }) : 'never';
+        const newLast = result.summary.sessions ? fmtDate(result.summary.lastAt, { month: 'short', day: 'numeric' }) : 'never';
+        const exportedNote = result.summary.exportedAt ? `, exported ${fmtDate(new Date(result.summary.exportedAt).getTime(), { month: 'short', day: 'numeric' })}` : '';
+        const droppedNote = result.summary.droppedSessions ? ` ${pluralize(result.summary.droppedSessions, 'damaged workout')} in this file will be skipped.` : '';
+        const question =
+          `Replace what is on this phone (${pluralize(cur.sessions.length, 'workout')}, last on ${curLast}) ` +
+          `with this backup (${pluralize(result.summary.sessions, 'workout')}, last on ${newLast}${exportedNote})?${droppedNote}`;
+        if (!confirm(question)) return;
+
+        const { savedPrev } = store.restoreBackup(result.state);
+        toast('Backup restored', savedPrev ? { action: 'Undo', onAction: () => { store.restorePrevious(); ctx.rerender(); } } : undefined);
         ctx.rerender();
       } catch (err) {
-        toast(err.message);
+        toast(err.message ?? 'Could not read that file.');
+      } finally {
+        input.value = '';
       }
     },
   });
@@ -126,9 +166,10 @@ function watchCard(st, ctx) {
   const file = h('input', {
     type: 'file', multiple: true, accept: '.zip,.csv,application/zip,text/csv', hidden: true,
     onChange: async (e) => {
-      const files = [...e.target.files];
-      if (!files.length) return;
+      const input = e.target;
+      const files = [...input.files];
       try {
+        if (!files.length) return;
         status.textContent = 'Reading…';
         const read = await readFiles(files, (msg) => (status.textContent = msg));
         if (!read.length) {
@@ -138,11 +179,17 @@ function watchCard(st, ctx) {
         status.textContent = 'Crunching…';
         await new Promise((r) => setTimeout(r, 20));
         const watch = buildWatch(read, store.getState().sessions);
-        store.setWatch(watch);
-        toast(`Imported ${watch.workouts.length} watch workouts and ${Object.keys(watch.days).length} days`);
+        const totalDays = Object.keys(watch.days).length;
+        const { state: trimmed, droppedDays } = store.trimWatchToFit({ ...store.getState(), watch });
+        store.setWatch(trimmed.watch);
+        const keptDays = Object.keys(trimmed.watch.days).length;
+        const fitNote = droppedDays ? ` Kept the most recent ${keptDays} of ${totalDays} days to fit on this phone.` : '';
+        toast(`Imported ${watch.workouts.length} watch workouts and ${keptDays} days.${fitNote}`);
         ctx.rerender();
       } catch (err) {
         status.textContent = err.message ?? 'Import failed.';
+      } finally {
+        input.value = '';
       }
     },
   });

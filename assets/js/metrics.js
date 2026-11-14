@@ -556,6 +556,22 @@ export function fmtPace(minPerMile) {
   return fmtMinutes(minPerMile);
 }
 
+// ── Backup reminder ──────────────────────────────────────────────────────
+
+/**
+ * Whether Today should nudge the user to export a backup: at least 5
+ * sessions logged, and either no backup was ever made, or at least 5 new
+ * sessions have piled up since the last one — unless it was snoozed.
+ */
+export function shouldShowBackupReminder(state, now = Date.now()) {
+  const sessions = state?.sessions ?? [];
+  const prefs = state?.prefs ?? {};
+  if (sessions.length < 5) return false;
+  if (prefs.backupSnoozeUntil && now < prefs.backupSnoozeUntil) return false;
+  if (!prefs.lastBackupAt) return true;
+  return sessions.length - (prefs.lastBackupSessionCount ?? 0) >= 5;
+}
+
 export function fmtDuration(min) {
   const m = Math.round(min);
   if (m < 60) return `${m} min`;
