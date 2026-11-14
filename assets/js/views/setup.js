@@ -61,6 +61,7 @@ export function renderSetup(ctx) {
       toggle('Beep and vibrate when rest is up', 'restAlert', st),
       toggle('Start the rest timer when I log a set', 'autoRest', st),
       toggle('Keep the screen on during a workout', 'keepAwake', st),
+      'Notification' in window && restNotifyToggle(st),
       Object.keys(st.swaps).some((k) => Object.keys(st.swaps[k]).length) &&
         h('button', { class: 'btn btn--ghost btn--small', type: 'button', onClick: () => { store.update((s) => { s.swaps = {}; }); toast('Plan swaps cleared'); ctx.rerender(); } }, 'Reset my permanent swaps'),
     ),
@@ -88,6 +89,42 @@ function seg(label, on, onClick) {
 
 function toggle(label, key, st) {
   return h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: st.prefs[key], onChange: (e) => store.setPref(key, e.target.checked) }), h('span', {}, label));
+}
+
+/** Opt-in background notification when rest ends. Asks for permission on the way in. */
+function restNotifyToggle(st) {
+  return h(
+    'div',
+    { class: 'stack' },
+    h(
+      'label',
+      { class: 'check' },
+      h('input', {
+        type: 'checkbox',
+        checked: st.prefs.restNotify,
+        onChange: async (e) => {
+          if (!e.target.checked) {
+            store.setPref('restNotify', false);
+            return;
+          }
+          try {
+            const perm = await Notification.requestPermission();
+            if (perm === 'granted') {
+              store.setPref('restNotify', true);
+            } else {
+              e.target.checked = false;
+              toast('Notifications were not allowed, so this stays off.');
+            }
+          } catch {
+            e.target.checked = false;
+            toast('Could not ask for notification permission.');
+          }
+        },
+      }),
+      h('span', {}, 'Notify me if rest ends while the app is in the background'),
+    ),
+    h('p', { class: 'field__hint' }, 'If the screen is locked the phone may delay this. Keeping the screen on (above) is the reliable option.'),
+  );
 }
 
 function importButton(ctx) {

@@ -2,6 +2,8 @@ import { h, clear, toast, fmtSecs, alertDone, primeAudio } from './util.js';
 import * as store from './store.js';
 import * as hr from './hr.js';
 import * as ai from './ai.js';
+import { restStatus } from './metrics.js';
+import { exercise } from './data/exercises.js';
 import { renderToday } from './views/today.js';
 import { renderWorkout } from './views/workout.js';
 import { renderMachines, renderMachine } from './views/machines.js';
@@ -122,35 +124,76 @@ function renderTopStatus() {
 
 // ── Ticking clocks: elapsed time and the rest timer ──────────────────────
 
-let restWasRunning = false;
 setInterval(() => {
   for (const el of document.querySelectorAll('[data-elapsed]')) {
     const secs = (Date.now() - Number(el.dataset.elapsed)) / 1000;
     el.textContent = secs >= 3600 ? `${Math.floor(secs / 3600)}:${fmtSecs(secs % 3600).padStart(5, '0')}` : fmtSecs(secs);
   }
   const a = store.active();
+
+  // Alert decision: runs on any route, exactly once per rest timer.
+  if (a?.rest && !a.rest.alerted) {
+    const status = restStatus(a.rest);
+    if (status.state === 'due' || status.state === 'late') {
+      store.markRestAlerted();
+      if (status.state === 'due') {
+        if (store.getState().prefs.restAlert) alertDone();
+        toast('Rest is up — next set.', ctx.route !== 'workout' ? { action: 'Workout', onAction: () => ctx.go('workout') } : undefined);
+      } else {
+        toast(`Rest ended ${fmtSecs(status.overdue)} ago.`);
+      }
+      notifyRestEnded(a);
+    }
+  }
+
+  // Bar: just reflects the current state, Workout route only.
   const bar = document.getElementById('restbar');
   if (a?.rest && bar) {
-    const left = (a.rest.until - Date.now()) / 1000;
+    const status = restStatus(a.rest);
     const label = bar.querySelector('[data-rest-left]');
     const fill = bar.querySelector('.restbar__fill');
-    if (left > 0) {
-      restWasRunning = true;
+    if (status.state === 'running') {
       bar.hidden = false;
-      if (label) label.textContent = fmtSecs(left);
-      if (fill) fill.style.width = `${Math.max(0, (left / a.rest.total) * 100)}%`;
+      if (label) label.textContent = fmtSecs(status.left);
+      if (fill) fill.style.width = `${Math.max(0, (status.left / a.rest.total) * 100)}%`;
     } else {
       if (label) label.textContent = 'Go';
       if (fill) fill.style.width = '0%';
       bar.classList.add('is-done');
-      if (restWasRunning) {
-        restWasRunning = false;
-        if (store.getState().prefs.restAlert) alertDone();
-        toast('Rest is up — next set.');
-      }
     }
   }
 }, 500);
+
+/** Best-effort background notification when rest ends out of sight. */
+async function notifyRestEnded(a) {
+  try {
+    if (document.visibilityState === 'visible') return;
+    if (!store.getState().prefs.restNotify) return;
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    const entry = a.entries[a.current];
+    const ex = entry && exercise(entry.ex);
+    const reg = await navigator.serviceWorker.ready;
+    await reg.showNotification('Rest is up', {
+      body: ex ? `Next: ${ex.name}` : 'Time for the next set.',
+      tag: 'gym-pal-rest',
+      renotify: true,
+      vibrate: [200, 100, 200],
+    });
+  } catch {
+    /* notifications unsupported or blocked — the toast/beep already covered it */
+  }
+}
+
+/** Dismiss any pending rest notification once the app is back in view. */
+async function closeRestNotifications() {
+  try {
+    if (!('Notification' in window) || !('serviceWorker' in navigator)) return;
+    const reg = await navigator.serviceWorker.ready;
+    for (const n of await reg.getNotifications({ tag: 'gym-pal-rest' })) n.close();
+  } catch {
+    /* nothing to close */
+  }
+}
 
 // ── Live heart rate ──────────────────────────────────────────────────────
 
@@ -180,7 +223,10 @@ async function wakeLock(on) {
   }
 }
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') wakeLock(ctx.route === 'workout' && store.getState().prefs.keepAwake);
+  if (document.visibilityState === 'visible') {
+    wakeLock(ctx.route === 'workout' && store.getState().prefs.keepAwake);
+    closeRestNotifications();
+  }
 });
 
 document.addEventListener('pointerdown', primeAudio, { once: true });

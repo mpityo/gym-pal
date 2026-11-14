@@ -7,11 +7,11 @@ A workout tracker for LA Fitness. It's a static site with no server, no accounts
 | Tab | What it's for |
 | --- | --- |
 | **Today** | Shows the week at a glance and today's workout from the plan, with a suggested weight for every lift and where each machine is in your gym. Tap Start. |
-| **Workout** | Live during a session. Big +/− steppers for weight and reps, a rest timer that beeps and vibrates, and a **Swap** button for when a machine is taken. It also has a how-to for every exercise, a plank stopwatch, treadmill time and distance, and live heart rate. |
+| **Workout** | Live during a session. Big +/− steppers for weight and reps, a rest timer that beeps and vibrates — even if you've switched to Machines or another tab — and a **Swap** button for when a machine is taken. It also has a how-to for every exercise, a plank stopwatch, treadmill time and distance, and live heart rate. |
 | **Machines** | 59 machines and exercises, each with what it looks like, how to set it up, form cues, common mistakes and good swaps. You can save notes on where each one is and your seat or pad settings. Each page also shows your history and strength trend for that exercise. |
 | **Stats** | Total weight moved (with a real-world comparison), sets per muscle this week against the 10-set target, weekly volume, pushed/pulled/legs split, strength trends, personal records, machine usage, swaps, rest times, a training heatmap, mile-run pace, and Galaxy Watch heart-rate zones, calories, steps, sleep and daily low heart rate. |
 | **History** | Every workout with its sets, gym, duration and heart rate. |
-| **Setup** | Bodyweight and age, 4-day or 3-day plan, gyms, watch import, Bluetooth heart rate, Claude key, and backup/restore. |
+| **Setup** | Bodyweight and age, 4-day or 3-day plan, rest-timer and background-notification toggles, gyms, watch import, Bluetooth heart rate, Claude key, and backup/restore. |
 
 ### The plan
 
@@ -20,6 +20,12 @@ The 4-day upper/lower split runs Upper A on Monday, Lower A on Tuesday, Upper B 
 ### How weights are suggested
 
 It uses double progression, as described in the ACSM 2009 position stand. You stay at a weight until every set reaches the top of the rep range, then go up one step: 5 lb for most machines and 10 lb for leg press and squats. If any set falls below the bottom of the range, you stay at that weight. The first time you do an exercise, it asks you to find a weight you could do about two more reps with than the target.
+
+### The rest timer
+
+The rest timer lives on the session, not on the Workout screen, so it alerts once wherever you are when it ends — even on Machines, Stats or History — and gives you a one-tap way back to the workout. If you come back long after it ended (say the phone was locked), it won't beep again; it just tells you how long ago it finished. −15/+15 change the time left without refilling the progress bar.
+
+With **Notify me if rest ends while the app is in the background** turned on in Setup (it asks for notification permission the first time), a system notification appears if the rest ends while the app isn't the visible tab, and tapping it opens the workout. This is best-effort: if the screen is locked, the phone may delay or drop it, same as any other web notification. Keeping the screen on (the toggle above it) is the reliable option.
 
 ### Where the numbers come from
 

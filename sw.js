@@ -55,6 +55,23 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(staleWhileRevalidate(event, request));
 });
 
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    (async () => {
+      const clientsList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      for (const client of clientsList) {
+        if ('focus' in client) {
+          client.focus();
+          if ('navigate' in client) client.navigate(new URL('./#/workout', self.registration.scope).href);
+          return;
+        }
+      }
+      await self.clients.openWindow(new URL('./#/workout', self.registration.scope).href);
+    })(),
+  );
+});
+
 async function staleWhileRevalidate(event, request) {
   const cached = await caches.match(request, { ignoreSearch: true });
   const refresh = fetch(request)
