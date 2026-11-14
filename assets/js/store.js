@@ -11,6 +11,7 @@
  */
 import { PLAN_BY_ID } from './data/plans.js';
 import { exercise } from './data/exercises.js';
+import { adjustRest as adjustRestPure } from './metrics.js';
 
 const KEY = 'gym-pal.v1';
 const listeners = new Set();
@@ -47,6 +48,7 @@ export const defaultState = () => ({
     lastBackupSessionCount: 0,
     /** Today's backup-reminder card is hidden until this time, if set. */
     backupSnoozeUntil: null,
+    restNotify: false,
   },
 });
 
@@ -95,6 +97,18 @@ export function flush() {
     notify();
     return true;
   } catch (err) {
+    // The undo snapshot from a restore/erase roughly doubles what is stored.
+    // Saving the real data matters more, so give that space up and retry once.
+    if (dropPrevious()) {
+      try {
+        localStorage.setItem(KEY, JSON.stringify(state));
+        saveError = null;
+        notify();
+        return true;
+      } catch {
+        // fall through to the failure path
+      }
+    }
     console.warn('Could not save', err);
     saveError = { name: err?.name ?? 'Error', at: Date.now() };
     notify();
@@ -347,7 +361,21 @@ export function addHrSample(bpm) {
 /** Rest timer lives on the session so it survives a reload or a phone lock. */
 export function setRest(secs) {
   update((s) => {
-    if (s.active) s.active.rest = secs ? { until: Date.now() + secs * 1000, total: secs } : null;
+    if (s.active) s.active.rest = secs ? { until: Date.now() + secs * 1000, total: secs, alerted: false } : null;
+  });
+}
+
+/** ±N seconds on the time left, without refilling the progress bar. */
+export function adjustRest(deltaSecs) {
+  update((s) => {
+    if (s.active?.rest) s.active.rest = adjustRestPure(s.active.rest, deltaSecs);
+  });
+}
+
+/** Marks the current rest as already alerted, so a reload does not re-alert. */
+export function markRestAlerted() {
+  update((s) => {
+    if (s.active?.rest) s.active.rest.alerted = true;
   });
 }
 
@@ -480,6 +508,17 @@ export function validateBackup(raw) {
     state: { ...candidate, sessions },
     summary: { sessions: sessions.length, lastAt, exportedAt, droppedSessions, droppedEntries },
   };
+}
+
+/** Remove the restore/erase undo snapshot. True if there was one. */
+function dropPrevious() {
+  try {
+    if (localStorage.getItem(PREV_KEY) == null) return false;
+    localStorage.removeItem(PREV_KEY);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Best-effort snapshot of the current state, so a restore/erase can be undone. */

@@ -55,6 +55,25 @@ test('session summary totals and rest', () => {
   assert.equal(sum.avgRestSec, 90);
 });
 
+test('parseClock reads treadmill times, strictly', () => {
+  assert.equal(m.parseClock('5:00'), 5);
+  assert.equal(m.parseClock('9:30'), 9.5);
+  assert.equal(m.parseClock('12'), 12);
+  assert.ok(Number.isNaN(m.parseClock('')));
+  assert.ok(Number.isNaN(m.parseClock('5:xx')));
+  assert.ok(Number.isNaN(m.parseClock('5:75')));
+});
+
+test('parseAmount accepts plain numbers and commas, rejects the rest', () => {
+  assert.equal(m.parseAmount('45'), 45);
+  assert.equal(m.parseAmount('47,5'), 47.5);
+  assert.equal(m.parseAmount('abc'), null);
+  assert.equal(m.parseAmount('-3'), null);
+  assert.equal(m.parseAmount('0'), null);
+  assert.equal(m.parseAmount('0', { allowZero: true }), 0);
+  assert.equal(m.parseAmount('2.5', { integer: true }), null);
+});
+
 test('double progression suggestion', () => {
   const target = { sets: 3, reps: [8, 12] };
   const maxed = [session(0, [{ ex: 'chest-press', sets: sets(100, 12, 12, 12) }])];
@@ -117,6 +136,55 @@ test('hr zones', () => {
   assert.equal(z3, 0);
   assert.ok(hs.zones.find((z) => z.id === 2).secs >= 145);
   assert.equal(m.maxHr({ age: 40 }), 180);
+});
+
+// ── Rest timer ───────────────────────────────────────────────────────────
+
+test('restStatus: running, due, late, done', () => {
+  assert.equal(m.restStatus(null, T0).state, 'done');
+  assert.deepEqual(m.restStatus(null, T0), { state: 'done', left: 0, overdue: 0 });
+
+  const running = m.restStatus({ until: T0 + 20000, total: 90, alerted: false }, T0);
+  assert.equal(running.state, 'running');
+  assert.equal(running.left, 20);
+  assert.equal(running.overdue, 0);
+
+  const due = m.restStatus({ until: T0 - 5000, total: 90, alerted: false }, T0);
+  assert.equal(due.state, 'due');
+  assert.equal(due.left, 0);
+  assert.equal(due.overdue, 5);
+
+  const late = m.restStatus({ until: T0 - 15000, total: 90, alerted: false }, T0);
+  assert.equal(late.state, 'late');
+  assert.equal(late.overdue, 15);
+
+  // The 10 s boundary itself counts as late, not due.
+  assert.equal(m.restStatus({ until: T0 - 10000, total: 90 }, T0).state, 'late');
+  assert.equal(m.restStatus({ until: T0 - 9999, total: 90 }, T0).state, 'due');
+});
+
+test('adjustRest keeps total so the bar does not refill', () => {
+  const rest = { until: T0 + 30000, total: 90, alerted: true };
+
+  const minus = m.adjustRest(rest, -15, T0);
+  assert.equal(Math.round((minus.until - T0) / 1000), 15);
+  assert.equal(minus.total, 90); // unchanged — still the original ceiling
+  assert.equal(minus.alerted, false); // re-armed for a fresh alert
+
+  const plus = m.adjustRest(rest, 15, T0);
+  assert.equal(Math.round((plus.until - T0) / 1000), 45);
+  assert.equal(plus.total, 90);
+
+  // Growing past the old total raises it too, so +15 never shows > 100%.
+  const bigPlus = m.adjustRest({ until: T0 + 80000, total: 90 }, 30, T0);
+  assert.equal(Math.round((bigPlus.until - T0) / 1000), 110);
+  assert.equal(bigPlus.total, 110);
+
+  // Never drops below 5 s left.
+  const floor = m.adjustRest({ until: T0 + 2000, total: 90 }, -15, T0);
+  assert.equal(Math.round((floor.until - T0) / 1000), 5);
+
+  assert.equal(m.adjustRest(null, -15, T0), null);
 });
 
 test('BLE heart rate measurement parsing', () => {

@@ -1,7 +1,7 @@
 /**
  * Every number the app shows is computed here, from the sessions you logged
  * and the watch data you imported. Pure functions, no DOM, so they are tested
- * in Node (see test/metrics.test.mjs).
+ * in Node (see test/).
  *
  * Claude is never asked to count. It is handed these finished numbers and
  * writes prose over them, nothing more.
@@ -310,6 +310,36 @@ export function suggest(exId, target, sessions, bodyweight) {
   };
 }
 
+// ── Rest timer ───────────────────────────────────────────────────────────
+
+/**
+ * Decides what the rest timer should show/do, independent of which screen is
+ * on top. `rest` is `{ until, total, alerted }` or null/undefined (no timer).
+ *   - 'running': still counting down.
+ *   - 'due': just ended (< 10 s ago) — the moment to beep/toast.
+ *   - 'late': ended 10 s or more ago — the page was likely frozen; no beep.
+ *   - 'done': no rest timer at all.
+ * `left`/`overdue` are seconds, always >= 0.
+ */
+export function restStatus(rest, now = Date.now()) {
+  if (!rest) return { state: 'done', left: 0, overdue: 0 };
+  const left = (rest.until - now) / 1000;
+  if (left > 0) return { state: 'running', left, overdue: 0 };
+  const overdue = -left;
+  return { state: overdue < 10 ? 'due' : 'late', left: 0, overdue };
+}
+
+/**
+ * ±deltaSecs on the time left, keeping `total` at whatever it already was
+ * (growing it if the new time left exceeds it) so the progress bar does not
+ * jump back to full on every tap. Never lets less than 5 s remain.
+ */
+export function adjustRest(rest, deltaSecs, now = Date.now()) {
+  if (!rest) return rest;
+  const left = Math.max(5, (rest.until - now) / 1000 + deltaSecs);
+  return { ...rest, until: now + left * 1000, total: Math.max(rest.total, left), alerted: false };
+}
+
 // ── Weekly volume ────────────────────────────────────────────────────────
 
 function inRange(sessions, from, to) {
@@ -570,6 +600,36 @@ export function shouldShowBackupReminder(state, now = Date.now()) {
   if (prefs.backupSnoozeUntil && now < prefs.backupSnoozeUntil) return false;
   if (!prefs.lastBackupAt) return true;
   return sessions.length - (prefs.lastBackupSessionCount ?? 0) >= 5;
+}
+
+/**
+ * Minutes from a treadmill-style time field. Accepts `m`, `m.d` or `m:ss`
+ * (seconds 0–59). Anything else — empty, `5:xx`, `5:75` — is `NaN`.
+ */
+export function parseClock(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return NaN;
+  if (s.includes(':')) {
+    const m = /^(\d+):(\d{1,2})$/.exec(s);
+    if (!m) return NaN;
+    const mins = Number(m[1]);
+    const secs = Number(m[2]);
+    if (secs > 59) return NaN;
+    return mins + secs / 60;
+  }
+  if (!/^\d+(\.\d+)?$/.test(s)) return NaN;
+  return Number(s);
+}
+
+/** A positive, finite number from user text. Accepts "12,5". Returns null if it is not one. */
+export function parseAmount(text, { allowZero = false, integer = false } = {}) {
+  const s = String(text ?? '').trim().replace(',', '.');
+  if (!s || !/^\d+(\.\d+)?$/.test(s)) return null;
+  const n = Number(s);
+  if (!Number.isFinite(n)) return null;
+  if (integer && !Number.isInteger(n)) return null;
+  if (n === 0 && !allowZero) return null;
+  return n;
 }
 
 export function fmtDuration(min) {
