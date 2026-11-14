@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Gym Pal</title>
+    <meta name="description" content="Workout tracker: today's plan, machine how-tos and swaps, suggested weights, and stats from your sets and your Galaxy Watch." />
+    <meta name="theme-color" content="#f6f4ef" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0f1216" media="(prefers-color-scheme: dark)" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="assets/icon-180.png" />
+    <link rel="stylesheet" href="assets/css/app.css" />
+  </head>
+  <body>
+    <a class="visually-hidden" href="#app">Skip to content</a>
+    <header class="topbar">
+      <div class="shell topbar__inner">
+        <a class="wordmark" href="#/today" aria-label="Gym Pal home">
+          <span class="wordmark__mark" aria-hidden="true">GP</span>
+          <span class="wordmark__text">Gym&nbsp;Pal</span>
+        </a>
+        <div class="topbar__status" id="top-status"></div>
+      </div>
+    </header>
+
+    <main class="shell" id="app" tabindex="-1"></main>
+
+    <nav class="tabbar" aria-label="Sections">
+      <div class="tabbar__inner" id="tabs"></div>
+    </nav>
+
+    <div id="toast-host" aria-live="polite"></div>
+    <script type="module" src="assets/js/app.js"></script>
+  </body>
+</html>
