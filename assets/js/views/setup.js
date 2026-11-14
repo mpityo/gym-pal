@@ -2,6 +2,7 @@ import { h, modal, toast, download, fmtRel, fmtDate, pluralize } from '../util.j
 import * as store from '../store.js';
 import * as photos from '../photos.js';
 import { mapsLink } from '../gyms.js';
+import { plansCard } from './custom.js';
 import * as ai from '../ai.js';
 import * as hr from '../hr.js';
 import { readFiles, buildWatch } from '../samsung.js';
@@ -58,9 +59,11 @@ export function renderSetup(ctx) {
     h('section', { class: 'card' },
       h('h2', { class: 'card__title' }, 'Schedule'),
       h('div', { class: 'seg' },
-        seg('4 days: upper/lower', st.prefs.mode === '4day', () => { store.setPref('mode', '4day'); ctx.rerender(); }),
-        seg('3 days: full body', st.prefs.mode === '3day', () => { store.setPref('mode', '3day'); ctx.rerender(); }),
+        seg('4 days: upper/lower', !st.schedule && st.prefs.mode === '4day', () => { store.setSchedule(null); store.setPref('mode', '4day'); ctx.rerender(); }),
+        seg('3 days: full body', !st.schedule && st.prefs.mode === '3day', () => { store.setSchedule(null); store.setPref('mode', '3day'); ctx.rerender(); }),
+        st.schedule && seg('Custom schedule', true, () => {}),
       ),
+      st.schedule && h('p', { class: 'muted small' }, 'Your own weekly schedule is in use — see Plans below. Pick 4 or 3 days to go back to a built-in one.'),
       toggle('Beep and vibrate when rest is up', 'restAlert', st),
       toggle('Start the rest timer when I log a set', 'autoRest', st),
       toggle('Keep the screen on during a workout', 'keepAwake', st),
@@ -70,6 +73,7 @@ export function renderSetup(ctx) {
         h('button', { class: 'btn btn--ghost btn--small', type: 'button', onClick: () => { store.update((s) => { s.swaps = {}; }); toast('Plan swaps cleared'); ctx.rerender(); } }, 'Reset my permanent swaps'),
     ),
 
+    plansCard(st, ctx),
     gymsCard(st, ctx),
     watchCard(st, ctx),
     claudeCard(ctx),

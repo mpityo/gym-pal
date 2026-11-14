@@ -810,14 +810,33 @@ export const EXERCISES = [
 
 export const BY_ID = Object.fromEntries(EXERCISES.map((e) => [e.id, e]));
 
+// ── Your own exercises (spec 15) ─────────────────────────────────────────
+// Custom entries have the same shape as library ones, ids 'c-…', plus
+// { custom: true, hidden?: true }. store.js registers them after loading and
+// after every change, so exercise(id) stays the one lookup for everything.
+
+let CUSTOM = [];
+let CUSTOM_BY_ID = {};
+
+/** Replace the set of custom exercises (from state.customExercises). */
+export function registerCustom(list) {
+  CUSTOM = (Array.isArray(list) ? list : []).filter((e) => e && typeof e.id === 'string' && !BY_ID[e.id]).map((e) => E({ mistakes: [], setup: [], cues: [], look: '', muscles: { primary: [], secondary: [] }, ...e, custom: true }));
+  CUSTOM_BY_ID = Object.fromEntries(CUSTOM.map((e) => [e.id, e]));
+}
+
+/** The library followed by your own exercises (hidden ones only when asked). */
+export function allExercises({ includeHidden = false } = {}) {
+  return [...EXERCISES, ...CUSTOM.filter((e) => includeHidden || !e.hidden)];
+}
+
 export function exercise(id) {
-  return BY_ID[id] ?? null;
+  return BY_ID[id] ?? CUSTOM_BY_ID[id] ?? null;
 }
 
 /** Never null: a placeholder keeps old sessions readable if an id disappears from the library. */
 export function exerciseOr(id) {
   return (
-    BY_ID[id] ?? {
+    exercise(id) ?? {
       id,
       name: `Unknown exercise (${id})`,
       unknown: true,

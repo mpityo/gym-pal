@@ -1,8 +1,9 @@
 import { h, toast, fmtRel, download } from '../util.js';
 import * as store from '../store.js';
-import { PLANS, PLAN_BY_ID, WEEK } from '../data/plans.js';
+import { PLAN_BY_ID, WEEK } from '../data/plans.js';
+import { getPlanFrom, allPlansFrom, weekSchedule } from '../routines.js';
 import { exerciseOr } from '../data/exercises.js';
-import { suggest, weekStart, dayKey, sessionSummary, muscleSets, addDays, fmtLb, fmtDuration, shouldShowBackupReminder, crowdGrid, crowdHint, plateText } from '../metrics.js';
+import { suggest, weekStart, dayKey, sessionSummary, muscleSets, addDays, fmtLb, fmtDuration, shouldShowBackupReminder, crowdGrid, crowdHint, plateText, estimateMinutes } from '../metrics.js';
 import { targetText, pickGym, gymChip, exerciseThumb } from './common.js';
 import { MUSCLES } from '../data/exercises.js';
 
@@ -15,7 +16,8 @@ export function todayPlan(state, now = Date.now()) {
   const today = new Date(now).getDay();
   const doneToday = sessions.some((s) => dayKey(s.startedAt) === dayKey(now));
 
-  if (state.prefs.mode === '3day') {
+  // A custom schedule (spec 15) takes precedence over the 4-day/3-day switch.
+  if (state.prefs.mode === '3day' && !state.schedule) {
     const last = [...sessions].reverse().find((s) => s.planId === 'full-a' || s.planId === 'full-b');
     const next = last?.planId === 'full-a' ? 'full-b' : 'full-a';
     const weekTarget = 3;
@@ -28,16 +30,23 @@ export function todayPlan(state, now = Date.now()) {
     return { planId: next, rest: !isDay, doneToday, missed: [], weekDone, weekTarget, extra, label: isDay ? 'Today' : 'Next' };
   }
 
-  const entry = WEEK.find((d) => d.day === today);
-  const ordered = WEEK.filter((d) => d.plan);
+  const week_ = weekSchedule(state);
+  const entry = week_.find((d) => d.day === today);
+  const ordered = week_.filter((d) => d.plan);
   const todayIdx = (today + 6) % 7; // Monday = 0
-  const missed = ordered.filter((d) => (d.day + 6) % 7 < todayIdx && !doneThisWeek.has(d.plan)).map((d) => d.plan);
-  const upcoming = ordered.find((d) => (d.day + 6) % 7 > todayIdx && !doneThisWeek.has(d.plan))?.plan ?? 'upper-a';
-  const weekTarget = 4;
+  const missed = [...new Set(ordered.filter((d) => (d.day + 6) % 7 < todayIdx && !doneThisWeek.has(d.plan)).map((d) => d.plan))];
+  const upcoming = ordered.find((d) => (d.day + 6) % 7 > todayIdx && !doneThisWeek.has(d.plan))?.plan ?? ordered[0]?.plan ?? 'upper-a';
+  // One workout per scheduled day (4 for the built-in week).
+  const weekTarget = ordered.length;
   // Count distinct planned workouts done this week, not every session: a
   // Freestyle session (planId null) or a repeat of the same plan should not
   // inflate the count or falsely mark the week complete.
-  const weekDone = new Set(sessionsThisWeek.map((s) => s.planId).filter((id) => id && WEEK.some((d) => d.plan === id))).size;
+  // A plan scheduled twice a week can be counted twice.
+  const slots = new Map();
+  for (const d of ordered) slots.set(d.plan, (slots.get(d.plan) ?? 0) + 1);
+  const doneCount = new Map();
+  for (const s of sessionsThisWeek) if (slots.has(s.planId)) doneCount.set(s.planId, (doneCount.get(s.planId) ?? 0) + 1);
+  const weekDone = [...slots].reduce((a, [id, n]) => a + Math.min(n, doneCount.get(id) ?? 0), 0);
   const extra = sessionsThisWeek.length - weekDone;
   if (entry?.plan) {
     return { planId: entry.plan, rest: false, doneToday: doneToday || doneThisWeek.has(entry.plan), missed, weekDone, weekTarget, extra, label: 'Today' };
@@ -111,7 +120,7 @@ export function renderToday(ctx) {
   const st = store.getState();
   const bw = st.profile.bodyweight;
   const plan = todayPlan(st);
-  const p = PLAN_BY_ID[plan.planId];
+  const p = getPlanFrom(st, plan.planId) ?? PLAN_BY_ID['upper-a'];
   const items = store.planItems(plan.planId);
   const now = Date.now();
   const week = weekStart(now);
@@ -124,14 +133,14 @@ export function renderToday(ctx) {
   const strip = h(
     'ol',
     { class: 'week' },
-    (st.prefs.mode === '3day'
+    (st.prefs.mode === '3day' && !st.schedule
       ? WEEK.map((d) => ({ ...d, plan: [1, 3, 5].includes(d.day) ? 'full' : null }))
-      : WEEK
+      : weekSchedule(st)
     ).map((d) => {
       const ts = addDays(week, (d.day + 6) % 7);
       const done = st.sessions.some((s) => dayKey(s.startedAt) === dayKey(ts));
       const isToday = dayKey(ts) === dayKey(now);
-      const name = d.plan === 'full' ? 'Full' : d.plan ? PLAN_BY_ID[d.plan].name : 'Rest';
+      const name = d.plan === 'full' ? 'Full' : d.plan ? getPlanFrom(st, d.plan)?.name ?? 'Plan' : 'Rest';
       return h(
         'li',
         { class: `week__day${isToday ? ' is-today' : ''}${done ? ' is-done' : ''}${d.plan ? '' : ' is-rest'}` },
@@ -199,7 +208,7 @@ export function renderToday(ctx) {
           h('span', { class: 'muted small' }, `${items.filter((i) => exerciseOr(i.ex).track !== 'cardio').length} lifts · ~${Math.round(estimateMinutes(items))} min`),
         ),
         crowd && h('p', { class: 'muted small' }, crowd.text),
-        plan.rest && plan.restNote && h('p', { class: 'muted' }, plan.weekDone >= plan.weekTarget ? `All ${plan.weekTarget} done this week. ${plan.restNote} — ${p.name} is up next.` : `${plan.restNote}. ${plan.missed.length === 1 ? `${PLAN_BY_ID[plan.missed[0]].name} got skipped this week — want to catch up?` : plan.missed.length > 1 ? `${plan.missed.length} workouts are still open this week. Catch up with the first one, or just pick up the plan on Monday.` : 'Or start the next workout early.'}`),
+        plan.rest && plan.restNote && h('p', { class: 'muted' }, plan.weekDone >= plan.weekTarget ? `All ${plan.weekTarget} done this week. ${plan.restNote} — ${p.name} is up next.` : `${plan.restNote}. ${plan.missed.length === 1 ? `${getPlanFrom(st, plan.missed[0])?.name} got skipped this week — want to catch up?` : plan.missed.length > 1 ? `${plan.missed.length} workouts are still open this week. Catch up with the first one, or just pick up the plan on Monday.` : 'Or start the next workout early.'}`),
         preview,
         h('button', { class: 'btn btn--primary btn--block btn--big', type: 'button', onClick: (e) => start(plan.planId, ctx, e.currentTarget) }, `Start ${p.name}`),
       ),
@@ -212,7 +221,7 @@ export function renderToday(ctx) {
         h(
           'div',
           { class: 'choice-grid' },
-          PLANS.filter((x) => x.id !== plan.planId && (st.prefs.mode === '3day' ? x.threeDay : !x.threeDay)).map((x) => {
+          allPlansFrom(st).filter((x) => x.id !== plan.planId && (st.schedule ? weekSchedule(st).some((d) => d.plan === x.id) || !x.builtIn : st.prefs.mode === '3day' ? x.threeDay : !x.threeDay)).map((x) => {
             const last = [...st.sessions].reverse().find((s) => s.planId === x.id);
             return h(
               'button',
@@ -290,14 +299,5 @@ function stat(value, label) {
   return h('div', { class: 'stat' }, h('span', { class: 'stat__value' }, value), h('span', { class: 'stat__label' }, label));
 }
 
-function estimateMinutes(items) {
-  let secs = 0;
-  for (const it of items) {
-    const ex = exerciseOr(it.ex);
-    if (ex.track === 'cardio') secs += (it.minutes ?? (it.miles ? it.miles * 10 : 5)) * 60;
-    else secs += it.sets * (45 + (it.rest ?? 90)) + 60;
-  }
-  return secs / 60;
-}
 
 export { stat };

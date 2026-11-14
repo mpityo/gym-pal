@@ -2,10 +2,12 @@ import { h, modal, toast, matchScore, fmtRel, fmtDate, shrink } from '../util.js
 import * as photos from '../photos.js';
 import * as store from '../store.js';
 import * as ai from '../ai.js';
-import { EXERCISES, MUSCLES, exercise } from '../data/exercises.js';
+import { allExercises, MUSCLES, exercise } from '../data/exercises.js';
 import { exerciseHistory, exerciseRecords, fmtW, fmtLb, e1rm, fmtMinutes, fmtPace } from '../metrics.js';
 import { muscleChips, usageMap, empty, gymChip, gymName, missingToggle, exerciseThumb, exerciseFigure, myPhotoBlock, photoGym } from './common.js';
 import { sparkline } from '../charts.js';
+import { openExerciseForm } from './custom.js';
+import { musclesFromText } from '../routines.js';
 
 const FILTERS = [
   ['all', 'All'],
@@ -30,7 +32,7 @@ export function renderMachines(ctx) {
     view.filter === 'all' ? true : view.filter === 'here' ? !store.isMissing(e.id, gid) : view.filter === 'used' ? usage.has(e.id) : e.pattern === view.filter;
 
   const draw = () => {
-    const rows = EXERCISES.filter(keep)
+    const rows = allExercises().filter(keep)
       .map((e) => [e, view.q ? matchScore(`${e.name} ${e.look} ${[...e.muscles.primary, ...e.muscles.secondary].map((m) => MUSCLES[m]).join(' ')}`, view.q) : 1])
       .filter(([, s]) => s > 0)
       .sort((a, b) => b[1] - a[1] || (view.filter === 'used' ? (usage.get(b[0].id)?.sets ?? 0) - (usage.get(a[0].id)?.sets ?? 0) : 0));
@@ -44,7 +46,7 @@ export function renderMachines(ctx) {
               { class: 'mrow', type: 'button', onClick: () => ctx.go(`machine/${e.id}`) },
               exerciseThumb(e.id),
               h('span', { class: 'mrow__main' },
-                h('span', { class: 'mrow__name' }, e.name, note.missing && h('span', { class: 'tag tag--warn' }, 'not at this gym')),
+                h('span', { class: 'mrow__name' }, e.name, e.custom && h('span', { class: 'tag' }, 'yours'), note.missing && h('span', { class: 'tag tag--warn' }, 'not at this gym')),
                 h('span', { class: 'mrow__meta' }, e.muscles.primary.map((m) => MUSCLES[m]).join(', ')),
                 note.where && h('span', { class: 'mrow__where' }, `📍 ${note.where}`),
               ),
@@ -84,6 +86,8 @@ export function renderMachines(ctx) {
     h('input', { class: 'input input--search', type: 'search', placeholder: 'Search machines or muscles', value: view.q, onInput: (e) => { view.q = e.target.value; draw(); } }),
     chips,
     list,
+    h('button', { class: 'btn btn--ghost btn--block', type: 'button', onClick: () => openExerciseForm({ onSaved: (saved) => ctx.go(`machine/${saved.id}`) }) }, '+ Add your own'),
+    h('p', { class: 'muted small center' }, 'A machine your gym has that is not listed? Add it, and it works everywhere: workouts, swaps, plans, history and stats.'),
   );
 }
 
@@ -105,7 +109,7 @@ async function identify(file, ctx) {
   modal('What is this?', body);
   try {
     const { base64, type } = await shrink(file);
-    const r = await ai.identifyMachine(base64, type, EXERCISES);
+    const r = await ai.identifyMachine(base64, type, allExercises());
     const ex = r.exerciseId !== 'none' ? exercise(r.exerciseId) : null;
     body.replaceChildren(
       h('h3', {}, r.name),
@@ -116,7 +120,18 @@ async function identify(file, ctx) {
       h('ul', { class: 'steps' }, r.cues.map((s) => h('li', {}, s))),
       ex && savePhotoButton(file, ex),
       ex && h('button', { class: 'btn btn--primary btn--block', type: 'button', onClick: () => { document.querySelector('dialog[open]')?.close(); ctx.go(`machine/${ex.id}`); } }, `Open ${ex.name}`),
-      !ex && h('p', { class: 'muted small' }, 'This one is not in the library, so it cannot be tracked by name yet. Log it under the closest match.'),
+      !ex && h('p', { class: 'muted small' }, 'This one is not in the library yet.'),
+      !ex && h('button', {
+        class: 'btn btn--primary btn--block',
+        type: 'button',
+        onClick: () => {
+          document.querySelector('dialog[open]')?.close();
+          openExerciseForm({
+            initial: { name: r.name, setup: r.setup, cues: r.cues, muscles: musclesFromText(r.muscles) },
+            onSaved: (saved) => ctx.go(`machine/${saved.id}`),
+          });
+        },
+      }, `Add "${r.name}" to my exercises`),
     );
   } catch (err) {
     body.replaceChildren(h('p', {}, err.message ?? 'That did not work.'));
@@ -174,7 +189,22 @@ export function renderMachine(ctx) {
     'div',
     { class: 'page' },
     h('button', { class: 'back', type: 'button', onClick: () => history.length > 1 ? history.back() : ctx.go('machines') }, '← Back'),
-    h('div', { class: 'page__head' }, h('p', { class: `eyebrow p-text-${ex.pattern}` }, ex.pattern), h('h1', {}, ex.name), muscleChips(ex)),
+    h('div', { class: 'page__head' }, h('p', { class: `eyebrow p-text-${ex.pattern}` }, ex.pattern, ex.custom ? ' · yours' : ''), h('h1', {}, ex.name), muscleChips(ex),
+      ex.custom && h('div', { class: 'row row--wrap' },
+        h('button', { class: 'btn btn--small', type: 'button', onClick: () => openExerciseForm({ id: ex.id, onSaved: () => ctx.rerender() }) }, 'Edit'),
+        h('button', {
+          class: 'btn btn--small btn--danger-ghost',
+          type: 'button',
+          onClick: () => {
+            if (!confirm(`Delete ${ex.name}?${hist.length ? ' It has history, so it will be hidden from lists and pickers but old workouts keep showing it.' : ''}`)) return;
+            const r = store.deleteCustomExercise(ex.id);
+            toast(r === 'hidden' ? `${ex.name} hidden` : `${ex.name} deleted`);
+            ctx.go('machines');
+          },
+        }, 'Delete'),
+      ),
+      ex.hidden && h('p', { class: 'muted small' }, 'Deleted: hidden from lists and pickers, kept for old workouts.'),
+    ),
 
     hist.length > 0 &&
       h(

@@ -1,6 +1,6 @@
 /** Pieces shared by several screens. */
 import { h, modal, matchScore, fmtRel, fmtDate, toast, shrink, photoInput } from '../util.js';
-import { EXERCISES, MUSCLES, exercise, exerciseOr } from '../data/exercises.js';
+import { allExercises, MUSCLES, exercise, exerciseOr } from '../data/exercises.js';
 import * as store from '../store.js';
 import { exerciseImages } from '../data/images.js';
 import * as photos from '../photos.js';
@@ -263,7 +263,7 @@ function exerciseOption(ex, usage, onPick) {
     'button',
     { class: `pick pick--thumb${note.missing ? ' is-missing' : ''}`, type: 'button', onClick: () => onPick(ex.id) },
     exerciseThumb(ex.id),
-    h('span', { class: 'pick__name' }, ex.name, note.missing && h('span', { class: 'tag tag--warn' }, 'not at this gym')),
+    h('span', { class: 'pick__name' }, ex.name, ex.custom && h('span', { class: 'tag' }, 'yours'), note.missing && h('span', { class: 'tag tag--warn' }, 'not at this gym')),
     h('span', { class: 'pick__meta' }, ex.muscles.primary.map((m) => MUSCLES[m]).join(', '), u ? ` · used ${fmtRel(u.last)}` : ''),
     note.where && h('span', { class: 'pick__where' }, `📍 ${note.where}`),
   );
@@ -303,7 +303,7 @@ export function openSwap(exId, { title = 'Swap exercise', onPick, planName, allo
   const ex = exerciseOr(exId);
   const usage = usageMap();
   const listed = missingLast(ex.alts.map(exercise).filter(Boolean));
-  const same = missingLast(EXERCISES.filter(
+  const same = missingLast(allExercises().filter(
     (e) => e.id !== ex.id && !ex.alts.includes(e.id) && e.pattern === ex.pattern && e.muscles.primary.some((m) => ex.muscles.primary.includes(m)),
   ));
   let always = false;
@@ -345,7 +345,7 @@ export function openSwap(exId, { title = 'Swap exercise', onPick, planName, allo
       results.replaceChildren(
         ...(q
           ? missingLast(
-              EXERCISES.map((e) => [e, matchScore(`${e.name} ${e.look}`, q)])
+              allExercises().map((e) => [e, matchScore(`${e.name} ${e.look}`, q)])
                 .filter(([, sc]) => sc > 0)
                 .sort((a, b) => b[1] - a[1])
                 .slice(0, 12),
@@ -390,7 +390,7 @@ export function openExercisePicker({ title = 'Add an exercise', onPick }) {
   const list = h('div', { class: 'pick-list' });
   const draw = (q = '') => {
     const gid = store.currentGym();
-    const rows = EXERCISES.map((e) => [e, q ? matchScore(`${e.name} ${e.look} ${e.muscles.primary.map((m) => MUSCLES[m]).join(' ')}`, q) : 1])
+    const rows = allExercises().map((e) => [e, q ? matchScore(`${e.name} ${e.look} ${e.muscles.primary.map((m) => MUSCLES[m]).join(' ')}`, q) : 1])
       .filter(([, sc]) => sc > 0)
       .sort((a, b) => store.isMissing(a[0].id, gid) - store.isMissing(b[0].id, gid) || b[1] - a[1] || (usage.get(b[0].id)?.sets ?? 0) - (usage.get(a[0].id)?.sets ?? 0));
     list.replaceChildren(...rows.map(([e]) => exerciseOption(e, usage, (id) => {

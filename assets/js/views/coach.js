@@ -1,8 +1,7 @@
 import { h, modal } from '../util.js';
 import * as store from '../store.js';
 import * as ai from '../ai.js';
-import { EXERCISES, MUSCLES, exerciseOr } from '../data/exercises.js';
-import { PLAN_BY_ID } from '../data/plans.js';
+import { allExercises, MUSCLES, exerciseOr } from '../data/exercises.js';
 import { suggest, exerciseRecords, muscleSets, weekStart, addDays, sessionSummary, dayKey, crowdGrid, quietTimes, busyTimes, fmtDayHour } from '../metrics.js';
 import { targetText } from './common.js';
 import { todayPlan } from './today.js';
@@ -43,10 +42,10 @@ function context(extra = {}) {
           })),
         }
       : null,
-    nextPlanned: tp ? { name: PLAN_BY_ID[tp.planId].name, when: tp.label, restDay: tp.rest, doneThisWeek: tp.weekDone, weeklyTarget: tp.weekTarget } : undefined,
+    nextPlanned: tp ? { name: store.getPlan(tp.planId)?.name, when: tp.label, restDay: tp.rest, doneThisWeek: tp.weekDone, weeklyTarget: tp.weekTarget } : undefined,
     thisWeekSetsPerMuscle: Object.fromEntries(Object.entries(ms.sets).filter(([, v]) => v > 0).map(([k, v]) => [MUSCLES[k], v])),
     recentWorkouts: st.sessions.slice(-6).map((s) => ({ date: dayKey(s.startedAt), plan: s.name, ...pick(sessionSummary(s, bw)), notes: s.notes || undefined })),
-    library: EXERCISES.map((e) => ({ id: e.id, name: e.name, primary: e.muscles.primary, alts: e.alts })),
+    library: allExercises().map((e) => ({ id: e.id, name: e.name, primary: e.muscles.primary, alts: e.alts })),
   };
 }
 

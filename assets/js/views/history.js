@@ -5,7 +5,6 @@ import { sessionSummary, hrSummary, maxHr, weekStart, fmtLb, fmtDuration, fmtW, 
 import { watchForSession } from '../samsung.js';
 import { zoneBar } from '../charts.js';
 import { empty, pickGym, gymName, crowdChips, openExercisePicker } from './common.js';
-import { PLANS } from '../data/plans.js';
 import { setLabel, openSetEditor } from './sets.js';
 
 export function renderHistory(ctx) {
@@ -299,7 +298,7 @@ function openLogPast(ctx) {
   const date = h('input', { class: 'input', type: 'date', value: toDateInput(yesterday), max: toDateInput(Date.now()) });
   const time = h('input', { class: 'input', type: 'time', value: '18:00' });
   const mins = h('input', { class: 'input', type: 'number', inputMode: 'numeric', min: 1, max: 600, value: 60 });
-  const plan = h('select', { class: 'input' }, PLANS.map((p) => h('option', { value: p.id }, p.name)), h('option', { value: '' }, 'Freestyle'));
+  const plan = h('select', { class: 'input' }, store.allPlans().map((p) => h('option', { value: p.id }, p.name)), h('option', { value: '' }, 'Freestyle'));
   const error = h('p', { class: 'field__error', role: 'alert', hidden: true });
   const dialog = modal('Log a past workout', h('div', { class: 'stack' },
     h('p', { class: 'muted small' }, 'For a workout you did without the phone. Fill in the sets on the next screen.'),
