@@ -3,7 +3,7 @@
  * on first load and served from cache, refreshing in the background so the
  * next load picks up a new deploy. Requests to Anthropic are never cached.
  */
-const VERSION = 'gym-pal-v1';
+const VERSION = 'gym-pal-v2';
 const SHELL = [
   './',
   'index.html',
@@ -15,6 +15,7 @@ const SHELL = [
   'assets/js/charts.js',
   'assets/js/data/exercises.js',
   'assets/js/data/plans.js',
+  'assets/js/gyms.js',
   'assets/js/hr.js',
   'assets/js/metrics.js',
   'assets/js/samsung.js',
@@ -53,6 +54,23 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
   if (new URL(request.url).origin !== self.location.origin) return;
   event.respondWith(staleWhileRevalidate(event, request));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    (async () => {
+      const clientsList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      for (const client of clientsList) {
+        if ('focus' in client) {
+          client.focus();
+          if ('navigate' in client) client.navigate(new URL('./#/workout', self.registration.scope).href);
+          return;
+        }
+      }
+      await self.clients.openWindow(new URL('./#/workout', self.registration.scope).href);
+    })(),
+  );
 });
 
 async function staleWhileRevalidate(event, request) {
