@@ -1,7 +1,7 @@
 /**
  * Every number the app shows is computed here, from the sessions you logged
  * and the watch data you imported. Pure functions, no DOM, so they are tested
- * in Node (see test/metrics.test.mjs).
+ * in Node (see test/).
  *
  * Claude is never asked to count. It is handed these finished numbers and
  * writes prose over them, nothing more.
@@ -202,24 +202,77 @@ export function newRecords(session, earlier, bodyweight) {
   for (const entry of session.entries) {
     const ex = exercise(entry.ex);
     if (!ex || ex.track === 'cardio' || !entry.sets.length) continue;
-    const before = exerciseRecords(earlier, entry.ex, bodyweight);
     const hasHistory = exerciseHistory(earlier, entry.ex, bodyweight).length > 0;
     if (!hasHistory) continue;
+    const before = exerciseRecords(earlier, entry.ex, bodyweight);
     const now = exerciseRecords([session], entry.ex, bodyweight);
-    if (now.bestE1rm && before.bestE1rm && now.bestE1rm.value > before.bestE1rm.value + 0.01) {
-      out.push({ ex: entry.ex, kind: 'Estimated 1-rep max', value: Math.round(now.bestE1rm.value), was: Math.round(before.bestE1rm.value) });
-    }
-    if (now.heaviest && before.heaviest && ex.load !== 'assist' &&Number(now.heaviest.w) > Number(before.heaviest.w)) {
-      out.push({ ex: entry.ex, kind: 'Heaviest set', value: Number(now.heaviest.w), was: Number(before.heaviest.w) });
-    }
-    if (ex.load === 'assist' && now.heaviest && before.heaviest && Number(now.heaviest.w) < Number(before.heaviest.w)) {
-      out.push({ ex: entry.ex, kind: 'Least assistance', value: Number(now.heaviest.w), was: Number(before.heaviest.w) });
-    }
-    if (now.longest && before.longest && now.longest.secs > before.longest.secs) {
-      out.push({ ex: entry.ex, kind: 'Longest hold', value: now.longest.secs, was: before.longest.secs });
-    }
+    for (const r of recordsBeaten(ex, before, now)) out.push({ ex: entry.ex, ...r });
   }
   return out;
+}
+
+/** The one definition of "a record was beaten", shared by newRecords and setRecords. */
+function recordsBeaten(ex, before, now) {
+  const out = [];
+  if (now.bestE1rm && before.bestE1rm && now.bestE1rm.value > before.bestE1rm.value + 0.01) {
+    out.push({ kind: 'Estimated 1-rep max', value: Math.round(now.bestE1rm.value), was: Math.round(before.bestE1rm.value) });
+  }
+  if (now.heaviest && before.heaviest && ex.load !== 'assist' && Number(now.heaviest.w) > Number(before.heaviest.w)) {
+    out.push({ kind: 'Heaviest set', value: Number(now.heaviest.w), was: Number(before.heaviest.w) });
+  }
+  if (ex.load === 'assist' && now.heaviest && before.heaviest && Number(now.heaviest.w) < Number(before.heaviest.w)) {
+    out.push({ kind: 'Least assistance', value: Number(now.heaviest.w), was: Number(before.heaviest.w) });
+  }
+  if (now.longest && before.longest && now.longest.secs > before.longest.secs) {
+    out.push({ kind: 'Longest hold', value: now.longest.secs, was: before.longest.secs });
+  }
+  return out;
+}
+
+/**
+ * Records the just-logged `set` beat, compared with all earlier sessions AND
+ * the sets already logged today. Same kinds and rules as newRecords; quiet
+ * for an exercise with no earlier sessions (the first time is not a PR).
+ */
+export function setRecords(set, exId, earlierSessions, earlierSetsToday, bodyweight) {
+  const ex = exercise(exId);
+  if (!ex || ex.track === 'cardio' || !set) return [];
+  if (!exerciseHistory(earlierSessions, exId, bodyweight).length) return [];
+  const today = (sets) => ({ id: '_today', startedAt: Number.MAX_SAFE_INTEGER, entries: [{ ex: exId, sets }] });
+  const before = exerciseRecords([...earlierSessions, today(earlierSetsToday ?? [])], exId, bodyweight);
+  const now = exerciseRecords([...earlierSessions, today([...(earlierSetsToday ?? []), set])], exId, bodyweight);
+  return recordsBeaten(ex, before, now);
+}
+
+/** The most recent time this exercise was done: { date, sets }, or null. */
+export function lastPerformance(sessions, exId) {
+  const hist = exerciseHistory(sessions, exId, 0);
+  const last = hist[hist.length - 1];
+  return last ? { date: last.date, sets: last.sets } : null;
+}
+
+/**
+ * How a set compares with the same-numbered set last time: weight first,
+ * then reps (seconds for holds). { dir: 1 | 0 | -1, text } or null (cardio,
+ * or nothing to compare with).
+ */
+export function compareSet(set, prev, ex) {
+  if (!set || !prev || !ex || ex.track === 'cardio') return null;
+  const plural = (n, word) => `${n} ${word}${Math.abs(n) === 1 ? '' : 's'}`;
+  if (ex.track === 'time') {
+    const d = (Number(set.secs) || 0) - (Number(prev.secs) || 0);
+    return d > 0 ? { dir: 1, text: `▲ +${d} s` } : d < 0 ? { dir: -1, text: `▼ −${-d} s` } : { dir: 0, text: '=' };
+  }
+  if (ex.track === 'weight') {
+    // Less help is better on assisted lifts.
+    const dw = ((Number(set.w) || 0) - (Number(prev.w) || 0)) * (ex.load === 'assist' ? -1 : 1);
+    if (dw !== 0) {
+      const lb = fmtW(Math.abs(Number(set.w) - Number(prev.w)));
+      return dw > 0 ? { dir: 1, text: `▲ ${ex.load === 'assist' ? '−' : '+'}${lb} lb` } : { dir: -1, text: `▼ ${ex.load === 'assist' ? '+' : '−'}${lb} lb` };
+    }
+  }
+  const dr = (Number(set.reps) || 0) - (Number(prev.reps) || 0);
+  return dr > 0 ? { dir: 1, text: `▲ +${plural(dr, 'rep')}` } : dr < 0 ? { dir: -1, text: `▼ −${plural(-dr, 'rep')}` } : { dir: 0, text: '=' };
 }
 
 // ── What to lift today ───────────────────────────────────────────────────
@@ -272,7 +325,15 @@ export function suggest(exId, target, sessions, bodyweight) {
 
   if (ex.track === 'bodyweight' || ex.load === 'none' || ex.load === 'body') {
     const best = Math.max(...sets.map((s) => Number(s.reps) || 0));
-    return { w: topW || 0, reps: Math.min(best + 1, max + 5), text: `${best + 1} reps`, reason: `${summary} Beat it by one.` };
+    // One number for both the pre-filled value and the text.
+    const next = Math.min(best + 1, max + 5);
+    const capped = next < best + 1;
+    return {
+      w: topW || 0,
+      reps: next,
+      text: `${next} reps`,
+      reason: capped ? `${summary} You are well past the range — add weight or pick a harder variation.` : `${summary} Beat it by one.`,
+    };
   }
 
   if (ex.load === 'assist') {
@@ -293,6 +354,8 @@ export function suggest(exId, target, sessions, bodyweight) {
       up: true,
     };
   }
+  const deload = plateauDeload(hist, target, max, step);
+  if (deload) return deload;
   if (anyMissed) {
     return {
       w: topW,
@@ -308,6 +371,65 @@ export function suggest(exId, target, sessions, bodyweight) {
     text: `${fmtW(topW)} lb`,
     reason: `${summary} Same weight — add a rep to your weakest set.`,
   };
+}
+
+/**
+ * Three sessions at the same top weight, none with every set at the top of
+ * the range, and no more total reps at that weight in the last than in the
+ * first: a plateau. Suggest about 10% less (rounded down to the exercise's
+ * step, never below one step) for clean sets at the top of the range; the
+ * normal rules then build back up. null when it is not a plateau.
+ */
+function plateauDeload(hist, target, max, step) {
+  if (hist.length < 3) return null;
+  const last3 = hist.slice(-3);
+  const tops = last3.map((h) => Math.max(...h.sets.map((s) => Number(s.w) || 0)));
+  if (!tops.every((w) => w === tops[0]) || !(tops[0] > 0)) return null;
+  const topW = tops[0];
+  const atTop = (h) => h.sets.filter((s) => Number(s.w) === topW);
+  const maxed = (h) => atTop(h).length >= (target?.sets ?? h.sets.length) && atTop(h).every((s) => Number(s.reps) >= max);
+  if (last3.some(maxed)) return null;
+  const reps = (h) => atTop(h).reduce((a, s) => a + (Number(s.reps) || 0), 0);
+  if (reps(last3[2]) > reps(last3[0])) return null;
+  const w = Math.max(step, Math.floor((topW * 0.9) / step) * step);
+  if (w >= topW) return null;
+  return {
+    w,
+    reps: max,
+    text: `${fmtW(w)} lb`,
+    deload: true,
+    reason: `Three sessions at ${fmtW(topW)} lb without adding reps. Drop to ${fmtW(w)} lb for clean sets of ${max}, then build back up.`,
+  };
+}
+
+// ── Rest timer ───────────────────────────────────────────────────────────
+
+/**
+ * Decides what the rest timer should show/do, independent of which screen is
+ * on top. `rest` is `{ until, total, alerted }` or null/undefined (no timer).
+ *   - 'running': still counting down.
+ *   - 'due': just ended (< 10 s ago) — the moment to beep/toast.
+ *   - 'late': ended 10 s or more ago — the page was likely frozen; no beep.
+ *   - 'done': no rest timer at all.
+ * `left`/`overdue` are seconds, always >= 0.
+ */
+export function restStatus(rest, now = Date.now()) {
+  if (!rest) return { state: 'done', left: 0, overdue: 0 };
+  const left = (rest.until - now) / 1000;
+  if (left > 0) return { state: 'running', left, overdue: 0 };
+  const overdue = -left;
+  return { state: overdue < 10 ? 'due' : 'late', left: 0, overdue };
+}
+
+/**
+ * ±deltaSecs on the time left, keeping `total` at whatever it already was
+ * (growing it if the new time left exceeds it) so the progress bar does not
+ * jump back to full on every tap. Never lets less than 5 s remain.
+ */
+export function adjustRest(rest, deltaSecs, now = Date.now()) {
+  if (!rest) return rest;
+  const left = Math.max(5, (rest.until - now) / 1000 + deltaSecs);
+  return { ...rest, until: now + left * 1000, total: Math.max(rest.total, left), alerted: false };
 }
 
 // ── Weekly volume ────────────────────────────────────────────────────────
@@ -556,6 +678,52 @@ export function fmtPace(minPerMile) {
   return fmtMinutes(minPerMile);
 }
 
+// ── Backup reminder ──────────────────────────────────────────────────────
+
+/**
+ * Whether Today should nudge the user to export a backup: at least 5
+ * sessions logged, and either no backup was ever made, or at least 5 new
+ * sessions have piled up since the last one — unless it was snoozed.
+ */
+export function shouldShowBackupReminder(state, now = Date.now()) {
+  const sessions = state?.sessions ?? [];
+  const prefs = state?.prefs ?? {};
+  if (sessions.length < 5) return false;
+  if (prefs.backupSnoozeUntil && now < prefs.backupSnoozeUntil) return false;
+  if (!prefs.lastBackupAt) return true;
+  return sessions.length - (prefs.lastBackupSessionCount ?? 0) >= 5;
+}
+
+/**
+ * Minutes from a treadmill-style time field. Accepts `m`, `m.d` or `m:ss`
+ * (seconds 0–59). Anything else — empty, `5:xx`, `5:75` — is `NaN`.
+ */
+export function parseClock(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return NaN;
+  if (s.includes(':')) {
+    const m = /^(\d+):(\d{1,2})$/.exec(s);
+    if (!m) return NaN;
+    const mins = Number(m[1]);
+    const secs = Number(m[2]);
+    if (secs > 59) return NaN;
+    return mins + secs / 60;
+  }
+  if (!/^\d+(\.\d+)?$/.test(s)) return NaN;
+  return Number(s);
+}
+
+/** A positive, finite number from user text. Accepts "12,5". Returns null if it is not one. */
+export function parseAmount(text, { allowZero = false, integer = false } = {}) {
+  const s = String(text ?? '').trim().replace(',', '.');
+  if (!s || !/^\d+(\.\d+)?$/.test(s)) return null;
+  const n = Number(s);
+  if (!Number.isFinite(n)) return null;
+  if (integer && !Number.isInteger(n)) return null;
+  if (n === 0 && !allowZero) return null;
+  return n;
+}
+
 export function fmtDuration(min) {
   const m = Math.round(min);
   if (m < 60) return `${m} min`;
@@ -563,3 +731,132 @@ export function fmtDuration(min) {
 }
 
 export { DAY, addDays };
+
+// ── Busy times (spec 10) ─────────────────────────────────────────────────
+// Your own history of how busy each gym was: one optional 1–5 rating per
+// workout, plus how often you had to swap because a machine was taken.
+
+export const CROWD_LABELS = ['Empty', 'Quiet', 'Normal', 'Busy', 'Packed'];
+export const WEEKDAY_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+/** '6 am', '12 pm', '7 pm'. */
+export function fmtHour(hour) {
+  const h = ((hour % 24) + 24) % 24;
+  const n = h % 12 === 0 ? 12 : h % 12;
+  return `${n} ${h < 12 ? 'am' : 'pm'}`;
+}
+
+/** 'Mon 6 pm' (day: Mon = 0). */
+export function fmtDayHour(day, hour) {
+  return `${WEEKDAY_SHORT[day]} ${fmtHour(hour)}`;
+}
+
+/** The word for a 1–5 score, e.g. 3.6 → 'Busy'. */
+export function crowdLabel(score) {
+  if (score == null) return null;
+  return CROWD_LABELS[Math.min(5, Math.max(1, Math.round(score))) - 1];
+}
+
+const emptyCell = () => ({ visits: 0, rated: 0, sum: 0, avg: null, taken: 0, takenVisits: 0, takenPerVisit: 0 });
+
+/**
+ * Per weekday (Mon = 0) and hour (0–23): visits, average crowd rating, and
+ * "taken" swaps per visit. A session counts as a visit in every clock hour
+ * it overlaps (17:40–18:50 → 17 and 18), in local time. gymId null = the
+ * sessions logged with no gym.
+ */
+export function crowdGrid(sessions, gymId) {
+  const cells = Array.from({ length: 7 }, () => Array.from({ length: 24 }, emptyCell));
+  let totalRated = 0;
+  for (const s of sessions ?? []) {
+    if ((s.gymId ?? null) !== (gymId ?? null) || typeof s.startedAt !== 'number') continue;
+    const rating = Number.isInteger(s.crowd) && s.crowd >= 1 && s.crowd <= 5 ? s.crowd : null;
+    if (rating) totalRated += 1;
+    const taken = (s.entries ?? []).filter((e) => e?.swapReason === 'taken').length;
+    const end = typeof s.endedAt === 'number' && s.endedAt > s.startedAt ? s.endedAt : s.startedAt + 1;
+    const slot = new Date(s.startedAt);
+    slot.setMinutes(0, 0, 0);
+    // Guard against bad data: never walk more than a day of hours.
+    for (let i = 0; slot.getTime() < end && i < 24; i++) {
+      const c = cells[(slot.getDay() + 6) % 7][slot.getHours()];
+      c.visits += 1;
+      c.taken += taken;
+      if (taken) c.takenVisits += 1;
+      if (rating) {
+        c.rated += 1;
+        c.sum += rating;
+      }
+      slot.setHours(slot.getHours() + 1);
+    }
+  }
+  for (const row of cells) {
+    for (const c of row) {
+      c.avg = c.rated ? c.sum / c.rated : null;
+      c.takenPerVisit = c.visits ? c.taken / c.visits : 0;
+    }
+  }
+  return { cells, totalRated };
+}
+
+/**
+ * One 1–5 score per cell: the average rating, nudged up by "taken" swaps.
+ * Cells with visits but no rating get an estimate from swaps alone (see
+ * crowdEstimated). null when there were no visits.
+ */
+export function crowdScore(cell) {
+  if (!cell?.visits) return null;
+  if (cell.rated) return Math.min(5, cell.avg + Math.min(1, cell.takenPerVisit * 0.5));
+  return Math.min(5, 2.5 + Math.min(2, cell.takenPerVisit));
+}
+
+/** True when crowdScore() is only an estimate (no ratings in that cell). */
+export function crowdEstimated(cell) {
+  return !!cell?.visits && !cell.rated;
+}
+
+function rankedCells(grid, minVisits) {
+  const out = [];
+  grid.cells.forEach((row, day) =>
+    row.forEach((c, hour) => {
+      if (c.visits >= minVisits) out.push({ day, hour, score: crowdScore(c), visits: c.visits });
+    }),
+  );
+  return out;
+}
+
+/** The quietest times, only from cells with at least 2 visits. Ties go to more visits. */
+export function quietTimes(grid, { limit = 3 } = {}) {
+  return rankedCells(grid, 2).sort((a, b) => a.score - b.score || b.visits - a.visits).slice(0, limit);
+}
+
+/** The busiest times, only from cells with at least 2 visits. Ties go to more visits. */
+export function busyTimes(grid, { limit = 3 } = {}) {
+  return rankedCells(grid, 2).sort((a, b) => b.score - a.score || b.visits - a.visits).slice(0, limit);
+}
+
+/**
+ * Today's one-line hint for the plan card, or null when there is no data
+ * for this weekday within an hour of now.
+ * "Mondays around 6 pm have been Busy for you (3 visits). Quieter: Mon 8 pm."
+ */
+export function crowdHint(grid, now = Date.now()) {
+  const d = new Date(now);
+  const day = (d.getDay() + 6) % 7;
+  const hour = d.getHours();
+  const near = [hour, hour - 1, hour + 1]
+    .filter((x) => x >= 0 && x < 24)
+    .map((x) => ({ hour: x, cell: grid.cells[day][x] }))
+    .filter((x) => x.cell.visits > 0);
+  if (!near.length) return null;
+  const best = near.reduce((a, b) => (b.cell.visits > a.cell.visits ? b : a));
+  const score = crowdScore(best.cell);
+  const word = crowdLabel(score);
+  const days = ['Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays', 'Sundays'][day];
+  const n = best.cell.visits;
+  let text = `${days} around ${fmtHour(best.hour)} have ${crowdEstimated(best.cell) ? 'looked' : 'been'} ${word} for you (${n} visit${n === 1 ? '' : 's'}).`;
+  const quieter = rankedCells(grid, 2)
+    .filter((c) => c.day === day && c.hour !== best.hour && c.score < score - 0.5)
+    .sort((a, b) => a.score - b.score || b.visits - a.visits)[0];
+  if (quieter) text += ` Quieter: ${fmtDayHour(quieter.day, quieter.hour)}.`;
+  return { text, score, hour: best.hour, visits: n };
+}

@@ -1,13 +1,15 @@
 import { h, fmtDate, fmtRel } from '../util.js';
 import * as store from '../store.js';
 import * as ai from '../ai.js';
-import { exercise, MUSCLES, MUSCLE_ORDER } from '../data/exercises.js';
+import { exerciseOr, MUSCLES, MUSCLE_ORDER } from '../data/exercises.js';
 import {
   totals, comparison, weekly, weekStreak, muscleSets, weekStart, addDays, machineUsage, exerciseHistory, exerciseRecords,
   e1rm, calendar, runs, sessionSummary, hrSummary, maxHr, fmtLb, fmtDuration, fmtPace, fmtW, swapCounts, dayKey,
+  crowdGrid, crowdScore, crowdLabel, crowdEstimated, quietTimes, busyTimes, fmtDayHour, fmtHour, CROWD_LABELS,
 } from '../metrics.js';
+import { mapsLink } from '../gyms.js';
 import { watchForSession } from '../samsung.js';
-import { bars, hbars, split, heatmap, sparkline, zoneBar } from '../charts.js';
+import { bars, hbars, split, heatmap, sparkline, zoneBar, crowdHeat } from '../charts.js';
 import { empty } from './common.js';
 
 let readCache = null;
@@ -42,7 +44,7 @@ export function renderStats(ctx) {
   // Strength trends: lifts done in 2+ sessions, change in best e1RM first → latest.
   const progress = usage
     .map((u) => {
-      const ex = exercise(u.ex);
+      const ex = exerciseOr(u.ex);
       if (ex.track !== 'weight' || ex.load === 'assist') return null;
       const hist = exerciseHistory(sessions, u.ex, bw);
       if (hist.length < 2) return null;
@@ -63,7 +65,7 @@ export function renderStats(ctx) {
   const favTime = Object.entries(hours).sort((a, b) => b[1] - a[1])[0][0];
 
   const mostMoved = [...usage].filter((u) => u.tonnage > 0).sort((a, b) => b.tonnage - a.tonnage).slice(0, 5);
-  const mostUsed = usage.filter((u) => exercise(u.ex).track !== 'cardio').slice(0, 6);
+  const mostUsed = usage.filter((u) => exerciseOr(u.ex).track !== 'cardio').slice(0, 6);
   const runList = runs(sessions).filter((r) => r.ex === 'mile-run');
   const bestMile = runList.length ? Math.min(...runList.map((r) => r.pace)) : null;
 
@@ -156,10 +158,10 @@ export function renderStats(ctx) {
       'section',
       { class: 'card' },
       h('h2', { class: 'card__title' }, 'Personal records'),
-      h('ol', { class: 'records' }, usage.filter((u) => exercise(u.ex).track === 'weight' && exercise(u.ex).load !== 'assist').slice(0, 10).map((u) => {
+      h('ol', { class: 'records' }, usage.filter((u) => exerciseOr(u.ex).track === 'weight' && exerciseOr(u.ex).load !== 'assist').slice(0, 10).map((u) => {
         const r = exerciseRecords(sessions, u.ex, bw);
         return h('li', {},
-          h('span', {}, exercise(u.ex).name),
+          h('span', {}, exerciseOr(u.ex).name),
           h('span', { class: 'mono' }, r.heaviest ? `${fmtW(r.heaviest.w)} × ${r.heaviest.reps}` : '–'),
           h('span', { class: 'muted small' }, r.bestE1rm ? `e1RM ${Math.round(r.bestE1rm.value)} · ${fmtRel(r.bestE1rm.date)}` : ''),
         );
@@ -172,14 +174,14 @@ export function renderStats(ctx) {
       { class: 'card' },
       h('h2', { class: 'card__title' }, 'Machine usage'),
       h('h3', { class: 'eyebrow' }, 'Most used (sets)'),
-      hbars(mostUsed.map((u) => ({ label: exercise(u.ex).name, value: u.sets, note: ` · ${u.sessions}×` }))),
+      hbars(mostUsed.map((u) => ({ label: exerciseOr(u.ex).name, value: u.sets, note: ` · ${u.sessions}×` }))),
       mostMoved.length > 0 && h('h3', { class: 'eyebrow' }, 'Most weight moved'),
-      mostMoved.length > 0 && hbars(mostMoved.map((u) => ({ label: exercise(u.ex).name, value: Math.round(u.tonnage) })), { fmt: (v) => `${fmtLb(v)} lb` }),
+      mostMoved.length > 0 && hbars(mostMoved.map((u) => ({ label: exerciseOr(u.ex).name, value: Math.round(u.tonnage) })), { fmt: (v) => `${fmtLb(v)} lb` }),
       Object.keys(swaps).length > 0 && h('h3', { class: 'eyebrow' }, 'Swaps (machine taken or missing)'),
       Object.keys(swaps).length > 0 &&
         h('ul', { class: 'plain' }, Object.entries(swaps).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([k, n]) => {
           const [from, to] = k.split('→');
-          return h('li', {}, `${exercise(from).name} → ${exercise(to).name}`, h('span', { class: 'muted' }, ` · ${n}×`));
+          return h('li', {}, `${exerciseOr(from).name} → ${exerciseOr(to).name}`, h('span', { class: 'muted' }, ` · ${n}×`));
         })),
     ),
 
@@ -197,6 +199,8 @@ export function renderStats(ctx) {
       h('h3', { class: 'eyebrow' }, 'Last 16 weeks'),
       heatmap(calendar(sessions, bw), { weeks: 16, now }),
     ),
+
+    crowdCard(st, sessions),
 
     // Cardio
     runList.length > 0 &&
@@ -219,6 +223,67 @@ function balanceNote(p) {
   const ratio = push / pull;
   const txt = ratio > 1.3 ? 'You have pushed noticeably more than you have pulled. Rows, pulldowns and rear-delt work balance the shoulders.' : ratio < 0.77 ? 'More pulling than pushing so far.' : 'Pushing and pulling are roughly balanced.';
   return h('p', { class: 'muted small' }, `Push : pull = ${ratio.toFixed(2)}. ${txt}`);
+}
+
+// ── When your gym is quiet (spec 10) ────────────────────────────────────
+
+let crowdGym; // the gym picked in the card, kept across renders
+
+/** Gyms (including "no gym", as null) with at least 3 rated sessions, most rated first. */
+function ratedGyms(sessions) {
+  const counts = new Map();
+  for (const s of sessions) if (s.crowd) counts.set(s.gymId ?? null, (counts.get(s.gymId ?? null) ?? 0) + 1);
+  return [...counts.entries()].filter(([, n]) => n >= 3).sort((a, b) => b[1] - a[1]).map(([id]) => id);
+}
+
+function mapsAnchor(g) {
+  const url = mapsLink(g);
+  return url && h('a', { href: url, target: '_blank', rel: 'noopener', class: 'small' }, 'Popular times on Google Maps ↗ (leaves the app)');
+}
+
+function crowdCard(st, sessions) {
+  const gyms = ratedGyms(sessions);
+  const title = h('h2', { class: 'card__title' }, 'When your gym is quiet');
+  const cur = store.currentGym();
+  if (!gyms.length) {
+    const rated = sessions.filter((s) => s.crowd).length;
+    return h('section', { class: 'card' }, title,
+      h('p', { class: 'muted' }, rated ? `Rate a few more workouts to see this (${rated} of 3 rated so far at one gym).` : 'Rate how busy the gym was when you finish a workout (or later, in History), and after 3 ratings this shows when your gym is quiet for you.'),
+      cur && mapsAnchor(store.gym(cur)),
+    );
+  }
+  if (crowdGym === undefined || !gyms.includes(crowdGym)) crowdGym = gyms.includes(cur) ? cur : gyms[0];
+  const gid = crowdGym;
+  const grid = crowdGrid(sessions, gid);
+  const used = [];
+  for (let hr = 0; hr < 24; hr++) if (grid.cells.some((row) => row[hr].visits)) used.push(hr);
+  const hours = [];
+  for (let hr = Math.max(0, used[0] - 1); hr <= Math.min(23, used[used.length - 1] + 1); hr++) hours.push(hr);
+  const detail = h('p', { class: 'muted small' }, 'Tap a square for details.');
+  const onCell = (day, hr, cell) => {
+    const sc = crowdScore(cell);
+    const parts = [`${fmtDayHour(day, hr)}–${fmtHour(hr + 1)}: ${cell.visits} visit${cell.visits === 1 ? '' : 's'}`];
+    parts.push(crowdEstimated(cell) ? `no ratings, guessed ${crowdLabel(sc)} from swaps` : `usually ${crowdLabel(sc)}`);
+    if (cell.takenVisits) parts.push(`a machine was taken in ${cell.takenVisits} of ${cell.visits}`);
+    detail.textContent = `${parts.join(', ')}.`;
+  };
+  const quiet = quietTimes(grid, { limit: 2 });
+  const busy = busyTimes(grid, { limit: 1 });
+  const name = (id) => (id ? store.gym(id)?.name ?? 'Removed gym' : 'No gym');
+  return h('section', { class: 'card' },
+    title,
+    gyms.length > 1 && h('div', { class: 'row row--wrap' }, gyms.map((id) =>
+      h('button', { class: `chip chip--btn${id === gid ? ' chip--on' : ''}`, type: 'button', onClick: (e) => { crowdGym = id; e.currentTarget.closest('.card').replaceWith(crowdCard(st, sessions)); } }, name(id)))),
+    gyms.length === 1 && h('p', { class: 'muted small' }, name(gid)),
+    crowdHeat(grid, { hours, score: crowdScore, onCell, label: (hr) => fmtHour(hr).replace(' am', 'a').replace(' pm', 'p') }),
+    h('div', { class: 'crowd__legend' }, CROWD_LABELS.map((l, i) => h('span', {}, h('span', { class: `crowd__cell c${i + 1}` }), l))),
+    detail,
+    quiet.length > 0 && h('p', {}, h('strong', {}, 'Quietest for you: '), quiet.map((q) => fmtDayHour(q.day, q.hour)).join(', ')),
+    busy.length > 0 && h('p', {}, h('strong', {}, 'Busiest: '), busy.map((q) => fmtDayHour(q.day, q.hour)).join(', ')),
+    !quiet.length && h('p', { class: 'muted small' }, 'Quietest and busiest times show once an hour has 2 or more visits.'),
+    h('p', { class: 'muted small' }, 'From your own ratings and "machine taken" swaps. Faded squares have no rating yet.'),
+    gid && mapsAnchor(store.gym(gid)),
+  );
 }
 
 function stat(value, label) {
@@ -320,7 +385,7 @@ function weeklyReadCard(st, d) {
     }
   }
   function show(v) {
-    out.replaceChildren(h('p', { class: 'read__headline' }, v.headline), h('ul', { class: 'steps' }, v.points.map((p) => h('li', {}, p))), h('p', { class: 'read__next' }, h('strong', {}, 'Next: '), v.next));
+    out.replaceChildren(h('p', { class: 'read__headline' }, v.headline), h('ul', { class: 'steps' }, (v.points ?? []).map((p) => h('li', {}, p))), h('p', { class: 'read__next' }, h('strong', {}, 'Next: '), v.next));
   }
   return h('section', { class: 'card card--read' }, h('div', { class: 'card__head' }, h('h2', { class: 'card__title' }, 'Coach’s read'), btn), out);
 }
