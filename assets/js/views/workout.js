@@ -4,10 +4,11 @@ import * as hr from '../hr.js';
 import { exerciseOr } from '../data/exercises.js';
 import { PLAN_BY_ID } from '../data/plans.js';
 import {
-  suggest, sessionSummary, newRecords, comparison, hrSummary, maxHr, fmtW, fmtLb, fmtDuration, fmtMinutes, fmtPace, parseClock, parseAmount,
+  suggest, sessionSummary, newRecords, comparison, hrSummary, maxHr, fmtW, fmtLb, fmtDuration, fmtMinutes,
 } from '../metrics.js';
 import { crowdChips, targetText, openSwap, openHowTo, openExercisePicker, pickGym, gymName, exerciseThumb } from './common.js';
 import { zoneBar } from '../charts.js';
+import { stepper, setLabel, setFields, readSet, openSetEditor } from './sets.js';
 
 /** Typed-but-not-logged values, so a re-render does not wipe them. */
 const draft = {};
@@ -210,10 +211,26 @@ function openEntry(ctx, a, entry, i, st) {
           h(
             'li',
             { class: 'sets__row' },
-            h('span', { class: 'sets__n' }, `Set ${j + 1}`),
-            h('span', { class: 'sets__v mono' }, setLabel(s, ex)),
-            h('span', { class: 'sets__t muted small' }, fmtClock(s.at)),
-            h('button', { class: 'sets__x', type: 'button', 'aria-label': `Delete set ${j + 1}`, onClick: () => { store.removeSet(i, j); ctx.rerender(); } }, '✕'),
+            h('button', {
+              class: 'sets__edit',
+              type: 'button',
+              'aria-label': `Edit set ${j + 1}`,
+              onClick: () => openSetEditor({ title: `Set ${j + 1} · ${ex.name}`, ex, set: s, onSave: (patch) => { store.editSet(i, j, patch); toast('Set updated'); ctx.rerender(); } }),
+            },
+              h('span', { class: 'sets__n' }, `Set ${j + 1}`),
+              h('span', { class: 'sets__v mono' }, setLabel(s, ex)),
+              h('span', { class: 'sets__t muted small' }, fmtClock(s.at)),
+            ),
+            h('button', {
+              class: 'sets__x',
+              type: 'button',
+              'aria-label': `Delete set ${j + 1}`,
+              onClick: () => {
+                const removed = store.removeSet(i, j);
+                ctx.rerender();
+                if (removed) toast('Set deleted', { action: 'Undo', onAction: () => { store.insertSet(i, j, removed); ctx.rerender(); } });
+              },
+            }, '✕'),
           ),
         ),
       )
@@ -221,43 +238,6 @@ function openEntry(ctx, a, entry, i, st) {
 
   const form = inputForm(ctx, a, entry, i, ex, sug, d, lastSet);
   return h('div', { class: 'entry__body' }, head, guide, logged, form, tools);
-}
-
-function setLabel(s, ex) {
-  if (ex.track === 'cardio') return [s.miles ? `${s.miles} mi` : null, s.minutes ? fmtMinutes(s.minutes) : null, s.miles && s.minutes ? `${fmtPace(s.minutes / s.miles)}/mi` : null].filter(Boolean).join(' · ');
-  if (ex.track === 'time') return `${s.secs} s`;
-  if (ex.track === 'bodyweight' || ex.load === 'none') return `${s.reps} reps${s.w ? ` +${fmtW(s.w)} lb` : ''}`;
-  const unit = ex.load === 'assist' ? ' assist' : ex.load === 'pair' ? ' ea' : '';
-  return `${fmtW(s.w)} lb${unit} × ${s.reps}`;
-}
-
-function stepper(label, value, step, onChange, { suffix, decimals, parse = Number, format = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(1)), inputMode } = {}) {
-  const input = h('input', {
-    class: 'stepper__input mono',
-    type: 'text',
-    inputMode: inputMode ?? (decimals ? 'decimal' : 'numeric'),
-    value: value ?? '',
-    'aria-label': label,
-    onInput: (e) => onChange(e.target.value),
-    onFocus: (e) => e.target.select(),
-  });
-  const bump = (dir) => {
-    const current = parse(input.value);
-    const n = Math.max(0, (Number.isFinite(current) ? current : 0) + dir * step);
-    input.value = format(n);
-    onChange(input.value);
-  };
-  return h(
-    'div',
-    { class: 'stepper' },
-    h('span', { class: 'stepper__label' }, label),
-    h('div', { class: 'stepper__ctl' },
-      h('button', { class: 'stepper__btn', type: 'button', 'aria-label': `Less ${label}`, onClick: () => bump(-1) }, '−'),
-      input,
-      h('button', { class: 'stepper__btn', type: 'button', 'aria-label': `More ${label}`, onClick: () => bump(1) }, '+'),
-    ),
-    suffix && h('span', { class: 'stepper__suffix' }, suffix),
-  );
 }
 
 function inputForm(ctx, a, entry, i, ex, sug, d, lastSet) {
@@ -274,26 +254,18 @@ function inputForm(ctx, a, entry, i, ex, sug, d, lastSet) {
   if (ex.track === 'cardio') {
     d.minutes ??= entry.target.minutes ? fmtMinutes(entry.target.minutes) : '';
     d.miles ??= entry.target.miles ?? '';
+    const fields = setFields(ex, d);
     return h(
       'div',
       { class: 'logform' },
-      h('div', { class: 'logform__inputs' },
-        stepper('Time (m:ss)', d.minutes, 0.25, (v) => (d.minutes = v), { parse: parseClock, format: fmtMinutes, inputMode: 'text' }),
-        stepper('Miles', d.miles, 0.1, (v) => (d.miles = v), { decimals: true }),
-      ),
+      fields.node,
       h('button', {
         class: 'btn btn--primary btn--block',
         type: 'button',
         onClick: () => {
-          const minutes = parseClock(d.minutes);
-          if (!(minutes > 0)) return toast('Enter the time from the treadmill.');
-          const milesText = String(d.miles ?? '').trim();
-          let miles = null;
-          if (milesText) {
-            miles = parseAmount(milesText);
-            if (miles === null) return toast('Enter the miles, or leave it blank.');
-          }
-          log({ minutes, miles });
+          const r = fields.read();
+          if (r.error) return toast(r.error);
+          log(r.set);
         },
       }, entry.sets.length ? 'Log another' : 'Log cardio'),
     );
@@ -322,41 +294,29 @@ function inputForm(ctx, a, entry, i, ex, sug, d, lastSet) {
           class: 'btn btn--primary',
           type: 'button',
           onClick: () => {
-            const secs = parseAmount(d.secs);
-            if (secs === null || secs < 1) return toast('Start the timer or enter the seconds.');
-            log({ secs });
+            const r = readSet(ex, d);
+            if (r.error) return toast(r.error);
+            log(r.set);
           },
         }, `Log set ${n}`),
       ),
     );
   }
 
-  const usesWeight = ex.track === 'weight';
   d.w ??= lastSet?.w ?? sug?.w ?? '';
   d.reps ??= lastSet?.reps ?? sug?.reps ?? entry.target.reps?.[1] ?? 10;
-  const wLabel = ex.load === 'assist' ? 'Assist lb' : ex.load === 'pair' ? 'lb each' : ex.load === 'plates' ? 'Plates lb' : 'Weight lb';
+  const fields = setFields(ex, d);
   return h(
     'div',
     { class: 'logform' },
-    h(
-      'div',
-      { class: 'logform__inputs' },
-      usesWeight && stepper(wLabel, d.w, ex.step ?? 5, (v) => (d.w = v), { decimals: true }),
-      stepper('Reps', d.reps, 1, (v) => (d.reps = v)),
-    ),
+    fields.node,
     h('button', {
       class: 'btn btn--primary btn--block btn--big',
       type: 'button',
       onClick: () => {
-        const reps = parseAmount(d.reps, { integer: true });
-        if (reps === null) return toast('How many reps?');
-        let w = 0;
-        if (usesWeight) {
-          w = parseAmount(d.w, { allowZero: true });
-          if (w === null) return toast('Enter the weight as a number, e.g. 45 or 47.5');
-        }
-        if (reps > 200 || w > 1500) return toast('That looks like a typo.');
-        log({ w, reps });
+        const r = fields.read();
+        if (r.error) return toast(r.error);
+        log(r.set);
       },
     }, `Log set ${n}${n > entry.target.sets ? ' (extra)' : ''}`),
   );

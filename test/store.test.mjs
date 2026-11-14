@@ -391,3 +391,111 @@ test('swapExercise records why it was swapped; an unknown reason is ignored', ()
   store.swapExercise(1, 'chest-press', 'bogus');
   assert.equal(store.active().entries[1].swapReason, 'taken');
 });
+
+// ── Spec 12: editing sets and past workouts ─────────────────────────────
+
+import * as metrics from '../assets/js/metrics.js';
+
+function finished(id, startedAt, entries) {
+  return { id, planId: null, name: 'Freestyle', startedAt, endedAt: startedAt + 3600000, entries, hr: [] };
+}
+const entry = (ex, sets) => ({ ex, plannedEx: ex, target: { sets: 3, reps: [8, 12], rest: 90 }, sets, skipped: false });
+
+test('editSet changes the values and keeps the time', () => {
+  store._resetForTests();
+  store.startSession('upper-a');
+  store.logSet(1, { w: 100, reps: 10 });
+  const at = store.active().entries[1].sets[0].at;
+  store.editSet(1, 0, { w: 105, reps: 9 });
+  const set = store.active().entries[1].sets[0];
+  assert.equal(set.w, 105);
+  assert.equal(set.reps, 9);
+  assert.equal(set.at, at);
+});
+
+test('removeSet returns the set and insertSet puts it back where it was', () => {
+  store._resetForTests();
+  store.startSession('upper-a');
+  store.logSet(1, { w: 100, reps: 10 });
+  store.logSet(1, { w: 100, reps: 9 });
+  store.logSet(1, { w: 100, reps: 8 });
+  const removed = store.removeSet(1, 1);
+  assert.equal(removed.reps, 9);
+  store.insertSet(1, 1, removed);
+  assert.deepEqual(store.active().entries[1].sets.map((x) => x.reps), [10, 9, 8]);
+});
+
+test('editSessionSet / addSessionSet / removeSessionSet on a finished workout', () => {
+  store._resetForTests({ ...store.defaultState(), sessions: [finished('a', 1000, [entry('chest-press', [{ w: 100, reps: 10, at: 1100 }, { w: 100, reps: 9, at: 1200 }]), entry('pec-deck', [{ w: 80, reps: 12, at: 1300 }])])] });
+  store.editSessionSet('a', 0, 1, { reps: 10 });
+  assert.equal(store.getSession('a').entries[0].sets[1].reps, 10);
+  assert.equal(store.getSession('a').entries[0].sets[1].at, 1200);
+  store.addSessionSet('a', 0, { w: 100, reps: 8 });
+  assert.equal(store.getSession('a').entries[0].sets[2].at, null, 'sets added later have no time');
+  // Removing the last set of an entry removes the entry.
+  const r1 = store.removeSessionSet('a', 1, 0);
+  assert.equal(r1.entry.ex, 'pec-deck');
+  assert.equal(r1.session, null);
+  assert.equal(store.getSession('a').entries.length, 1);
+  // Unknown ids are no-ops.
+  assert.equal(store.removeSessionSet('nope', 0, 0), null);
+  store.editSessionSet('nope', 0, 0, { reps: 1 });
+});
+
+test('removing the last set of the last entry deletes the session; restoreSession brings it back', () => {
+  store._resetForTests({ ...store.defaultState(), sessions: [finished('a', 1000, [entry('chest-press', [{ w: 100, reps: 10, at: 1100 }])]), finished('b', 5000, [])] });
+  const before = JSON.parse(JSON.stringify(store.getSession('a')));
+  const r = store.removeSessionSet('a', 0, 0);
+  assert.equal(r.session.id, 'a');
+  assert.equal(store.getSession('a'), null);
+  store.restoreSession(before);
+  assert.deepEqual(store.getState().sessions.map((s) => s.id), ['a', 'b']);
+  assert.equal(store.getSession('a').entries[0].sets.length, 1);
+});
+
+test('addSessionEntry / removeSessionEntry', () => {
+  store._resetForTests({ ...store.defaultState(), sessions: [finished('a', 1000, [entry('chest-press', [{ w: 100, reps: 10, at: 1100 }])])] });
+  assert.equal(store.addSessionEntry('a', 'pec-deck'), 1);
+  assert.equal(store.getSession('a').entries[1].ex, 'pec-deck');
+  assert.equal(store.addSessionEntry('a', 'not-an-exercise'), -1);
+  assert.equal(store.removeSessionEntry('a', 1).ex, 'pec-deck');
+  assert.equal(store.getSession('a').entries.length, 1);
+});
+
+test('changing startedAt re-sorts sessions, and suggest() then uses the right "last" session', () => {
+  const day = 86400000;
+  store._resetForTests({
+    ...store.defaultState(),
+    sessions: [
+      finished('old', 10 * day, [entry('chest-press', [{ w: 100, reps: 12, at: 1 }, { w: 100, reps: 12, at: 2 }, { w: 100, reps: 12, at: 3 }])]),
+      finished('new', 20 * day, [entry('chest-press', [{ w: 80, reps: 8, at: 1 }, { w: 80, reps: 8, at: 2 }, { w: 80, reps: 8, at: 3 }])]),
+    ],
+  });
+  const target = { sets: 3, reps: [8, 12] };
+  assert.equal(metrics.suggest('chest-press', target, store.getState().sessions, 180).w, 80);
+  // The 100 lb workout actually happened later: fix its date.
+  store.updateSession('old', { startedAt: 30 * day, endedAt: 30 * day + 3600000 });
+  assert.deepEqual(store.getState().sessions.map((s) => s.id), ['new', 'old']);
+  assert.ok(metrics.suggest('chest-press', target, store.getState().sessions, 180).w > 100, 'all sets maxed at 100 → go up');
+});
+
+test('addPastSession inserts in date order, is flagged manual, and never touches active', () => {
+  const day = 86400000;
+  store._resetForTests({ ...store.defaultState(), sessions: [finished('a', 10 * day, []), finished('c', 30 * day, [])] });
+  store.startSession('upper-a');
+  const activeBefore = store.active();
+  const s = store.addPastSession({ planId: 'lower-a', startedAt: 20 * day, endedAt: 20 * day + 3600000 });
+  assert.equal(s.manual, true);
+  assert.equal(s.name, 'Lower A');
+  assert.deepEqual(s.entries, []);
+  assert.deepEqual(store.getState().sessions.map((x) => x.id), ['a', s.id, 'c']);
+  assert.equal(store.active(), activeBefore);
+});
+
+test('sessionSummary copes with sets that have at: null', () => {
+  const s = finished('a', 1000, [entry('chest-press', [{ w: 100, reps: 10, at: 1000 }, { w: 100, reps: 10, at: null }, { w: 100, reps: 10, at: 121000 }])]);
+  const sum = metrics.sessionSummary(s, 180);
+  assert.equal(sum.workSets, 3);
+  assert.equal(sum.tonnage, 3000);
+  assert.ok(sum.avgRestSec == null || Number.isFinite(sum.avgRestSec));
+});

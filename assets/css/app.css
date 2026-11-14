@@ -242,7 +242,8 @@ textarea.input { resize: vertical; }
 .guide--up .guide__main { color: var(--good); }
 .guide__why, .guide__note { font-size: 0.86rem; color: var(--ink-2); margin: 0; }
 .sets { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.25rem; }
-.sets__row { display: grid; grid-template-columns: 3.6rem 1fr auto 2.2rem; align-items: center; gap: 0.5rem; padding: 0.35rem 0.5rem; border-radius: 6px; background: var(--surface-2); }
+.sets__row { display: grid; grid-template-columns: 1fr 2.2rem; align-items: center; gap: 0.5rem; padding: 0.35rem 0.5rem; border-radius: 6px; background: var(--surface-2); }
+.sets__edit { display: grid; grid-template-columns: 3.6rem 1fr auto; align-items: center; gap: 0.5rem; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; min-height: 2rem; }
 .sets__n { font-size: 0.8rem; color: var(--ink-3); font-weight: 700; }
 .sets__v { font-weight: 700; }
 .sets__x { width: 2rem; height: 2rem; border: 0; background: none; color: var(--ink-3); cursor: pointer; border-radius: 6px; }
@@ -414,3 +415,9 @@ button.crowd__cell { cursor: pointer; }
 .crowd__cell.is-estimate { opacity: 0.6; }
 .crowd__legend { display: flex; flex-wrap: wrap; gap: 0.6rem; font-size: 0.75rem; color: var(--ink-3); }
 .crowd__legend .crowd__cell { display: inline-block; width: 12px; height: 12px; vertical-align: -2px; margin-right: 0.25rem; }
+
+/* ── Editing sets and past workouts (spec 12) ───────────────────────── */
+.field__error { color: var(--alert); font-size: 0.9rem; margin: 0; }
+.edit-entry { display: grid; gap: 0.35rem; padding: 0.6rem 0; border-bottom: 1px solid var(--line); }
+.edit-entry__head { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
+.tag--manual { background: var(--surface-2); }
