@@ -15,7 +15,13 @@ A workout tracker for any gym with machines, cables and dumbbells. It's a static
 
 ### The plan
 
-The 4-day upper/lower split runs Upper A on Monday, Lower A on Tuesday, Upper B on Thursday and Lower B on Friday. There's also a 3-day full-body option. Plans live in `assets/js/data/plans.js`. To always use a different exercise in a plan, swap it during a workout and tick **Always use the swap**. The swap then sticks for that plan at every gym. If one gym just doesn't have the machine, mark it **Not at this gym** instead (see Gyms below).
+The 4-day upper/lower split runs Upper A on Monday, Lower A on Tuesday, Upper B on Thursday and Lower B on Friday. There's also a 3-day full-body option. The built-in plans live in `assets/js/data/plans.js`.
+
+**Setup → Plans** lets you change any of them: sets, rep range (or seconds, minutes, miles), rest, notes and order. You can add or remove exercises, reset a built-in plan to its default, create new plans (empty, or a copy of another), and pick a plan or Rest for each weekday. A custom weekly schedule takes over from the 4-day/3-day switch, which then shows **Custom schedule**. **Reset to the built-in week** goes back. Under the editor, a live summary shows the estimated minutes and the weekly sets per muscle across the scheduled plans against the 10-set line, so a hand-edited plan stays sensible. Workouts already started or finished never change when a plan does.
+
+**Machines → + Add your own** adds an exercise that is not in the library: its name, type (stack, plate-loaded, dumbbells, bodyweight, timed hold, cardio), movement, main and helping muscles, weight step, and optional description, set-up, cues and swaps. Your own exercises work everywhere the library ones do and are tagged **yours**. Deleting one that has history only hides it, so old workouts still read correctly. When **What's this machine?** finds a machine that is not in the library, it offers to add it with the form pre-filled.
+
+To always use a different exercise in a plan, swap it during a workout and tick **Always use the swap**. The swap then sticks for that plan at every gym. If one gym just doesn't have the machine, mark it **Not at this gym** instead (see Gyms below).
 
 ### Gyms
 

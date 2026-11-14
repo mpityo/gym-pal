@@ -3,7 +3,7 @@
  * on first load and served from cache, refreshing in the background so the
  * next load picks up a new deploy. Requests to Anthropic are never cached.
  */
-const VERSION = 'gym-pal-v5';
+const VERSION = 'gym-pal-v6';
 const SHELL = [
   './',
   'index.html',
@@ -20,10 +20,12 @@ const SHELL = [
   'assets/js/hr.js',
   'assets/js/metrics.js',
   'assets/js/photos.js',
+  'assets/js/routines.js',
   'assets/js/samsung.js',
   'assets/js/store.js',
   'assets/js/util.js',
   'assets/js/views/coach.js',
+  'assets/js/views/custom.js',
   'assets/js/views/common.js',
   'assets/js/views/history.js',
   'assets/js/views/machines.js',

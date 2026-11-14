@@ -943,3 +943,14 @@ export function needsWarmup(entries, index) {
   const pattern = exercise(e.ex).pattern;
   return !entries.slice(0, index).some((x) => big(x) && exercise(x.ex).pattern === pattern);
 }
+
+/** Rough minutes for a plan's items: each set plus its rest, cardio by time. */
+export function estimateMinutes(items) {
+  let secs = 0;
+  for (const it of items ?? []) {
+    const ex = exercise(it.ex);
+    if (ex?.track === 'cardio') secs += (it.minutes ?? (it.miles ? it.miles * 10 : 5)) * 60;
+    else secs += (Number(it.sets) || 0) * (45 + (it.rest ?? 90)) + 60;
+  }
+  return secs / 60;
+}

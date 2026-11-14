@@ -10,7 +10,8 @@
  * never end up in an exported backup.
  */
 import { PLAN_BY_ID } from './data/plans.js';
-import { exercise } from './data/exercises.js';
+import { exercise, registerCustom } from './data/exercises.js';
+import { getPlanFrom, allPlansFrom, cleanItem, isBuiltInPlan, defaultPlanItem } from './routines.js';
 import * as G from './gyms.js';
 import { adjustRest as adjustRestPure } from './metrics.js';
 
@@ -35,6 +36,12 @@ export const defaultState = () => ({
   machineNotes: {},
   /** gymId -> exercise id -> { where?, settings?, missing? } — what is true at that gym; wins over machineNotes */
   gymNotes: {},
+  /** Spec 15: your own exercises, same shape as library entries, ids 'c-…', plus { custom: true, hidden? } */
+  customExercises: [],
+  /** Spec 15: planId -> { id, name, tint, items } — edited built-ins and plans you made ('p-…') */
+  customPlans: {},
+  /** Spec 15: null = the built-in week; else { 0..6: planId | null } keyed by Date.getDay() */
+  schedule: null,
   /** planId -> { [itemIndex]: exerciseId } — permanent swaps */
   swaps: {},
   /** Samsung Health import, see samsung.js */
@@ -62,6 +69,7 @@ export const defaultState = () => ({
 });
 
 let state = load();
+registerCustom(state.customExercises);
 
 function load() {
   try {
@@ -142,6 +150,8 @@ function notify() {
 }
 
 function commit() {
+  // Keep exercise(id) aware of your own exercises after any change.
+  registerCustom(state.customExercises);
   persist();
   notify();
 }
@@ -169,6 +179,7 @@ export function update(fn) {
 export function _resetForTests(next = defaultState()) {
   state = next;
   saveError = null;
+  registerCustom(state.customExercises);
 }
 
 const uid = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
@@ -271,12 +282,25 @@ export function nearestGym(pos) {
 
 // ── Plans with your swaps applied ────────────────────────────────────────
 
-/** Items with permanent swaps applied and anything missing at the gym auto-swapped. */
+/**
+ * Items with permanent swaps applied and anything missing at the gym
+ * auto-swapped. When you have your own version of the plan, its items are
+ * used as they are and the old permanent swaps are ignored.
+ */
 export function planItems(planId, gymId = currentGym()) {
-  return G.resolvePlanItems(PLAN_BY_ID[planId], state.swaps[planId], (exId) => G.isMissing(state, exId, gymId));
+  const custom = state.customPlans?.[planId];
+  const missing = (exId) => G.isMissing(state, exId, gymId);
+  return custom ? G.resolvePlanItems(custom, {}, missing) : G.resolvePlanItems(PLAN_BY_ID[planId], state.swaps[planId], missing);
 }
 
 export function setPermanentSwap(planId, index, exId) {
+  if (state.customPlans?.[planId]) {
+    // An edited plan: change its item directly.
+    editPlan(planId, (p) => {
+      if (p.items[index] && exId) p.items[index].ex = exId;
+    });
+    return;
+  }
   update((s) => {
     s.swaps[planId] = { ...(s.swaps[planId] ?? {}) };
     if (!exId || PLAN_BY_ID[planId]?.items[index]?.ex === exId) delete s.swaps[planId][index];
@@ -293,7 +317,7 @@ export function startSession(planId, { gymId = null, geo = null } = {}) {
     s.active = {
       id: uid(),
       planId,
-      name: PLAN_BY_ID[planId]?.name ?? 'Freestyle',
+      name: getPlanFrom(state, planId)?.name ?? 'Freestyle',
       startedAt: now,
       endedAt: null,
       gymId,
@@ -414,19 +438,10 @@ export function skipEntry(entryIndex, skipped = true) {
   });
 }
 
-/** The target an exercise gets when it is added by hand. */
-function defaultItem(exId, ex) {
-  return ex.track === 'cardio'
-    ? { ex: exId, sets: 1, minutes: 10 }
-    : ex.track === 'time'
-      ? { ex: exId, sets: 3, secs: [30, 60], rest: 60 }
-      : { ex: exId, sets: 3, reps: [8, 12], rest: 90 };
-}
-
 export function addEntry(exId) {
   const ex = exercise(exId);
   if (!ex) return;
-  const item = defaultItem(exId, ex);
+  const item = defaultPlanItem(exId);
   update((s) => {
     if (!s.active) return;
     s.active.entries.push(entryFor(item));
@@ -589,7 +604,7 @@ export function addSessionEntry(id, exId) {
   update((s) => {
     const x = findSession(s, id);
     if (!x) return;
-    x.entries.push(entryFor(defaultItem(exId, ex)));
+    x.entries.push(entryFor(defaultPlanItem(exId)));
     index = x.entries.length - 1;
   });
   return index;
@@ -622,7 +637,7 @@ export function restoreSession(snapshot) {
  * flagged `manual: true`, with no entries yet. Never touches `active`.
  */
 export function addPastSession({ planId = null, startedAt, endedAt }) {
-  const plan = planId ? PLAN_BY_ID[planId] : null;
+  const plan = planId ? getPlanFrom(state, planId) : null;
   const session = {
     id: uid(),
     planId: plan ? planId : null,
@@ -801,4 +816,131 @@ export function trimWatchToFit(nextState, maxChars = 4_000_000) {
     trimmed = { ...nextState, watch: { ...watch, days } };
   }
   return { state: trimmed, droppedDays: dropped };
+}
+
+// ── Your own exercises (spec 15) ────────────────────────────────────────
+
+const EX_FIELDS = ['name', 'pattern', 'track', 'load', 'step', 'muscles', 'look', 'setup', 'cues', 'mistakes', 'alts'];
+
+function cleanExercise(data) {
+  const out = {};
+  for (const k of EX_FIELDS) if (data[k] !== undefined) out[k] = JSON.parse(JSON.stringify(data[k]));
+  out.name = String(out.name ?? '').trim();
+  return out;
+}
+
+/** Adds one of your own exercises. Returns it (with its new 'c-…' id). */
+export function addCustomExercise(data) {
+  const e = { ...cleanExercise(data), id: `c-${uid()}`, custom: true };
+  update((s) => {
+    s.customExercises = [...(s.customExercises ?? []), e];
+  });
+  return e;
+}
+
+export function updateCustomExercise(id, patch) {
+  update((s) => {
+    const e = (s.customExercises ?? []).find((x) => x.id === id);
+    if (e) Object.assign(e, cleanExercise({ ...e, ...patch }));
+  });
+}
+
+/**
+ * Deletes one of your exercises. With logged history it is only hidden, so
+ * old workouts still show its name. Returns 'hidden' | 'removed' | null.
+ */
+export function deleteCustomExercise(id) {
+  const used = state.sessions.some((x) => x.entries.some((e) => e.ex === id)) || state.active?.entries.some((e) => e.ex === id);
+  let result = null;
+  update((s) => {
+    const list = s.customExercises ?? [];
+    const e = list.find((x) => x.id === id);
+    if (!e) return;
+    if (used) {
+      e.hidden = true;
+      result = 'hidden';
+    } else {
+      s.customExercises = list.filter((x) => x.id !== id);
+      result = 'removed';
+    }
+  });
+  return result;
+}
+
+/** Is this name already taken by a visible exercise (library or yours)? */
+export function exerciseNameTaken(name, exceptId = null, list) {
+  const n = String(name ?? '').trim().toLowerCase();
+  return (list ?? []).some((e) => e.id !== exceptId && e.name.trim().toLowerCase() === n);
+}
+
+// ── Plans and the week (spec 15) ─────────────────────────────────────────
+
+export function getPlan(id) {
+  return getPlanFrom(state, id);
+}
+
+export function allPlans() {
+  return allPlansFrom(state);
+}
+
+/**
+ * Change a plan. The first edit of a built-in plan seeds your copy from the
+ * built-in with its permanent swaps baked in, then forgets those swaps.
+ */
+export function editPlan(planId, fn) {
+  update((s) => {
+    s.customPlans ??= {};
+    if (!s.customPlans[planId]) {
+      const base = PLAN_BY_ID[planId];
+      if (!base) return;
+      const items = G.resolvePlanItems(base, s.swaps[planId], () => false).map(cleanItem);
+      s.customPlans[planId] = { id: planId, name: base.name, tint: base.tint, items };
+      delete s.swaps[planId];
+    }
+    fn(s.customPlans[planId]);
+  });
+}
+
+/** Back to the built-in version of a built-in plan. */
+export function resetPlan(planId) {
+  if (!isBuiltInPlan(planId)) return;
+  update((s) => {
+    if (s.customPlans) delete s.customPlans[planId];
+  });
+}
+
+/** A new empty plan, or a copy of another one. Returns its id. */
+export function createPlan(name, copyFrom = null) {
+  const id = `p-${uid()}`;
+  const from = copyFrom ? getPlanFrom(state, copyFrom) : null;
+  const items = from ? (state.customPlans?.[copyFrom] ? from.items : planItems(copyFrom, null)).map(cleanItem) : [];
+  update((s) => {
+    s.customPlans ??= {};
+    s.customPlans[id] = { id, name: String(name || 'My plan').trim(), tint: from?.tint ?? 'orange', items };
+  });
+  return id;
+}
+
+/** Deletes a plan you created, and takes it off the schedule. */
+export function deletePlan(planId) {
+  if (isBuiltInPlan(planId)) return;
+  update((s) => {
+    if (s.customPlans) delete s.customPlans[planId];
+    if (s.schedule) for (const d of Object.keys(s.schedule)) if (s.schedule[d] === planId) s.schedule[d] = null;
+  });
+}
+
+/** null = back to the built-in week. Otherwise { 0..6: planId | null }. */
+export function setSchedule(schedule) {
+  update((s) => {
+    s.schedule = schedule ? { ...schedule } : null;
+  });
+}
+
+/** Sets one weekday (Date.getDay()) of a custom schedule, starting it from the current week if needed. */
+export function setScheduleDay(day, planId, startFrom) {
+  update((s) => {
+    s.schedule ??= { ...(startFrom ?? {}) };
+    s.schedule[day] = planId || null;
+  });
 }

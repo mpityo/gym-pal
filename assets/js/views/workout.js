@@ -2,7 +2,6 @@ import { h, modal, toast, fmtSecs, fmtClock, fmtDate } from '../util.js';
 import * as store from '../store.js';
 import * as hr from '../hr.js';
 import { exerciseOr } from '../data/exercises.js';
-import { PLAN_BY_ID } from '../data/plans.js';
 import {
   suggest, sessionSummary, newRecords, comparison, hrSummary, maxHr, fmtW, fmtLb, fmtDuration, fmtMinutes,
   lastPerformance, compareSet, setRecords, work, warmupSets, needsWarmup, plateText, PLATES,
@@ -169,7 +168,7 @@ function openEntry(ctx, a, entry, i, st) {
             openSwap(entry.ex, {
               title: 'Machine taken or missing?',
               allowPermanent: entry.planIndex != null && a.planId,
-              planName: PLAN_BY_ID[a.planId]?.name,
+              planName: store.getPlan(a.planId)?.name,
               askReason: true,
               onPick: (id, { always, reason, markMissing }) => {
                 if (markMissing) store.setMachineNote(entry.ex, { missing: true }, a.gymId ?? store.currentGym());
