@@ -1,7 +1,7 @@
 import { h, modal, toast, fmtSecs, fmtClock } from '../util.js';
 import * as store from '../store.js';
 import * as hr from '../hr.js';
-import { exercise } from '../data/exercises.js';
+import { exerciseOr } from '../data/exercises.js';
 import { PLAN_BY_ID } from '../data/plans.js';
 import {
   suggest, sessionSummary, newRecords, comparison, hrSummary, maxHr, fmtW, fmtLb, fmtDuration, fmtMinutes, fmtPace,
@@ -105,7 +105,7 @@ function done(entry) {
 }
 
 function closedEntry(entry, i) {
-  const ex = exercise(entry.ex);
+  const ex = exerciseOr(entry.ex);
   return h(
     'button',
     { class: 'entry__row', type: 'button', onClick: () => store.setCurrent(i) || rerenderSoon() },
@@ -126,7 +126,7 @@ function summarizeSets(entry, ex) {
 
 function openEntry(ctx, a, entry, i, st) {
   rerenderSoon = () => ctx.rerender();
-  const ex = exercise(entry.ex);
+  const ex = exerciseOr(entry.ex);
   const earlier = st.sessions;
   const sug = suggest(entry.ex, entry.target, earlier, st.profile.bodyweight);
   const note = store.machineNote(entry.ex);
@@ -136,7 +136,7 @@ function openEntry(ctx, a, entry, i, st) {
   const head = h(
     'div',
     { class: 'entry__head' },
-    h('div', {}, h('h3', { class: 'entry__title' }, ex.name), h('p', { class: 'muted small' }, targetText(entry.target, ex), entry.target.rest && ex.track !== 'cardio' ? ` · rest ${fmtSecs(entry.target.rest)}` : '', entry.plannedEx !== entry.ex ? ` · swapped for ${exercise(entry.plannedEx).name}` : '')),
+    h('div', {}, h('h3', { class: 'entry__title' }, ex.name), h('p', { class: 'muted small' }, targetText(entry.target, ex), entry.target.rest && ex.track !== 'cardio' ? ` · rest ${fmtSecs(entry.target.rest)}` : '', entry.plannedEx !== entry.ex ? ` · swapped for ${exerciseOr(entry.plannedEx).name}` : '')),
   );
 
   const tools = h(
@@ -158,7 +158,7 @@ function openEntry(ctx, a, entry, i, st) {
                 store.swapExercise(i, id);
                 if (always && a.planId && entry.planIndex != null) store.setPermanentSwap(a.planId, entry.planIndex, id);
                 delete draft[a.id + i];
-                toast(`Swapped to ${exercise(id).name}`);
+                toast(`Swapped to ${exerciseOr(id).name}`);
                 ctx.rerender();
               },
             }),
@@ -392,7 +392,7 @@ function finish(ctx) {
       ),
       cmp && h('p', { class: 'muted' }, `That is about ${cmp.text} (approx.).`),
       prs.length > 0 && h('h3', { class: 'eyebrow' }, 'New records'),
-      prs.length > 0 && h('ul', { class: 'prs' }, prs.map((p) => h('li', {}, h('strong', {}, exercise(p.ex).name), ` — ${p.kind}: ${p.kind === 'Longest hold' ? `${p.value} s` : `${p.value} lb`} (was ${p.was})`))),
+      prs.length > 0 && h('ul', { class: 'prs' }, prs.map((p) => h('li', {}, h('strong', {}, exerciseOr(p.ex).name), ` — ${p.kind}: ${p.kind === 'Longest hold' ? `${p.value} s` : `${p.value} lb`} (was ${p.was})`))),
       hrs && h('h3', { class: 'eyebrow' }, 'Heart rate'),
       hrs && h('p', {}, `Average ${hrs.avg} bpm, peak ${hrs.max} bpm.`),
       hrs?.zones && zoneBar(hrs.zones),

@@ -77,7 +77,7 @@ export function flush() {
   }
 }
 
-window.addEventListener?.('pagehide', flush);
+globalThis.addEventListener?.('pagehide', flush);
 
 function commit() {
   persist();
@@ -172,7 +172,9 @@ export function planItems(planId) {
   const plan = PLAN_BY_ID[planId];
   if (!plan) return [];
   const swaps = state.swaps[planId] ?? {};
-  return plan.items.map((item, i) => (swaps[i] ? { ...item, ex: swaps[i], swappedFrom: item.ex } : item));
+  // A swap pointing at an id no longer in the library (exercise renamed/removed
+  // since the swap was saved) is ignored; the plan's own exercise is used instead.
+  return plan.items.map((item, i) => (swaps[i] && exercise(swaps[i]) ? { ...item, ex: swaps[i], swappedFrom: item.ex } : item));
 }
 
 export function setPermanentSwap(planId, index, exId) {

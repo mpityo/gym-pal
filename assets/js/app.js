@@ -164,10 +164,17 @@ hr.onHeartRate((bpm) => {
 // ── Keep the screen on during a workout ──────────────────────────────────
 
 let lock = null;
+let pending = null; // the in-flight navigator.wakeLock.request(), if any
 async function wakeLock(on) {
+  if (pending) {
+    // A request is already on the way (e.g. render() ran again on a fast
+    // hash change) — wait for it instead of issuing a second one.
+    await pending.catch(() => {});
+  }
   try {
     if (on && !lock && 'wakeLock' in navigator && document.visibilityState === 'visible') {
-      lock = await navigator.wakeLock.request('screen');
+      pending = navigator.wakeLock.request('screen');
+      lock = await pending;
       lock.addEventListener('release', () => {
         lock = null;
       });
@@ -177,6 +184,8 @@ async function wakeLock(on) {
     }
   } catch {
     lock = null;
+  } finally {
+    pending = null;
   }
 }
 document.addEventListener('visibilitychange', () => {

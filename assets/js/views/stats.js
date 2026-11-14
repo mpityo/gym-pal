@@ -1,7 +1,7 @@
 import { h, fmtDate, fmtRel } from '../util.js';
 import * as store from '../store.js';
 import * as ai from '../ai.js';
-import { exercise, MUSCLES, MUSCLE_ORDER } from '../data/exercises.js';
+import { exerciseOr, MUSCLES, MUSCLE_ORDER } from '../data/exercises.js';
 import {
   totals, comparison, weekly, weekStreak, muscleSets, weekStart, addDays, machineUsage, exerciseHistory, exerciseRecords,
   e1rm, calendar, runs, sessionSummary, hrSummary, maxHr, fmtLb, fmtDuration, fmtPace, fmtW, swapCounts, dayKey,
@@ -42,7 +42,7 @@ export function renderStats(ctx) {
   // Strength trends: lifts done in 2+ sessions, change in best e1RM first → latest.
   const progress = usage
     .map((u) => {
-      const ex = exercise(u.ex);
+      const ex = exerciseOr(u.ex);
       if (ex.track !== 'weight' || ex.load === 'assist') return null;
       const hist = exerciseHistory(sessions, u.ex, bw);
       if (hist.length < 2) return null;
@@ -63,7 +63,7 @@ export function renderStats(ctx) {
   const favTime = Object.entries(hours).sort((a, b) => b[1] - a[1])[0][0];
 
   const mostMoved = [...usage].filter((u) => u.tonnage > 0).sort((a, b) => b.tonnage - a.tonnage).slice(0, 5);
-  const mostUsed = usage.filter((u) => exercise(u.ex).track !== 'cardio').slice(0, 6);
+  const mostUsed = usage.filter((u) => exerciseOr(u.ex).track !== 'cardio').slice(0, 6);
   const runList = runs(sessions).filter((r) => r.ex === 'mile-run');
   const bestMile = runList.length ? Math.min(...runList.map((r) => r.pace)) : null;
 
@@ -156,10 +156,10 @@ export function renderStats(ctx) {
       'section',
       { class: 'card' },
       h('h2', { class: 'card__title' }, 'Personal records'),
-      h('ol', { class: 'records' }, usage.filter((u) => exercise(u.ex).track === 'weight' && exercise(u.ex).load !== 'assist').slice(0, 10).map((u) => {
+      h('ol', { class: 'records' }, usage.filter((u) => exerciseOr(u.ex).track === 'weight' && exerciseOr(u.ex).load !== 'assist').slice(0, 10).map((u) => {
         const r = exerciseRecords(sessions, u.ex, bw);
         return h('li', {},
-          h('span', {}, exercise(u.ex).name),
+          h('span', {}, exerciseOr(u.ex).name),
           h('span', { class: 'mono' }, r.heaviest ? `${fmtW(r.heaviest.w)} × ${r.heaviest.reps}` : '–'),
           h('span', { class: 'muted small' }, r.bestE1rm ? `e1RM ${Math.round(r.bestE1rm.value)} · ${fmtRel(r.bestE1rm.date)}` : ''),
         );
@@ -172,14 +172,14 @@ export function renderStats(ctx) {
       { class: 'card' },
       h('h2', { class: 'card__title' }, 'Machine usage'),
       h('h3', { class: 'eyebrow' }, 'Most used (sets)'),
-      hbars(mostUsed.map((u) => ({ label: exercise(u.ex).name, value: u.sets, note: ` · ${u.sessions}×` }))),
+      hbars(mostUsed.map((u) => ({ label: exerciseOr(u.ex).name, value: u.sets, note: ` · ${u.sessions}×` }))),
       mostMoved.length > 0 && h('h3', { class: 'eyebrow' }, 'Most weight moved'),
-      mostMoved.length > 0 && hbars(mostMoved.map((u) => ({ label: exercise(u.ex).name, value: Math.round(u.tonnage) })), { fmt: (v) => `${fmtLb(v)} lb` }),
+      mostMoved.length > 0 && hbars(mostMoved.map((u) => ({ label: exerciseOr(u.ex).name, value: Math.round(u.tonnage) })), { fmt: (v) => `${fmtLb(v)} lb` }),
       Object.keys(swaps).length > 0 && h('h3', { class: 'eyebrow' }, 'Swaps (machine taken or missing)'),
       Object.keys(swaps).length > 0 &&
         h('ul', { class: 'plain' }, Object.entries(swaps).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([k, n]) => {
           const [from, to] = k.split('→');
-          return h('li', {}, `${exercise(from).name} → ${exercise(to).name}`, h('span', { class: 'muted' }, ` · ${n}×`));
+          return h('li', {}, `${exerciseOr(from).name} → ${exerciseOr(to).name}`, h('span', { class: 'muted' }, ` · ${n}×`));
         })),
     ),
 
