@@ -2,9 +2,9 @@
  * The exercise library.
  *
  * Every machine, cable move, free-weight lift and cardio piece the plans use,
- * plus the swaps for each. Written for a big-box gym (LA Fitness carries Life
- * Fitness, Hammer Strength, Matrix and Precor kit), so `look` describes what to
- * look for on the floor rather than a brand.
+ * plus the swaps for each. Written for any commercial gym (most carry kit from
+ * Life Fitness, Hammer Strength, Matrix, Precor and the like), so `look`
+ * describes what to look for on the floor rather than a brand.
  *
  * Fields
  *   pattern   push | pull | legs | core | cardio — drives the pushed/pulled split

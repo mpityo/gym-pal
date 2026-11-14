@@ -6,7 +6,7 @@ import { PLAN_BY_ID } from '../data/plans.js';
 import {
   suggest, sessionSummary, newRecords, comparison, hrSummary, maxHr, fmtW, fmtLb, fmtDuration, fmtMinutes, fmtPace,
 } from '../metrics.js';
-import { targetText, openSwap, openHowTo, openExercisePicker } from './common.js';
+import { targetText, openSwap, openHowTo, openExercisePicker, pickGym, gymName } from './common.js';
 import { zoneBar } from '../charts.js';
 
 /** Typed-but-not-logged values, so a re-render does not wipe them. */
@@ -18,7 +18,13 @@ export function renderWorkout(ctx) {
   const st = store.getState();
   const bw = st.profile.bodyweight;
   const sum = sessionSummary(a, bw);
-  const g = a.gymId && store.gym(a.gymId);
+  const changeGym = async () => {
+    const next = await pickGym({ title: 'Change gym', current: a.gymId, intro: 'Exercises you have not started are re-picked for that gym. Logged sets stay as they are.' });
+    if (next === undefined || next === a.gymId) return;
+    store.setSessionGym(next);
+    toast(`Now at ${gymName(next)}`);
+    ctx.rerender();
+  };
 
   const header = h(
     'section',
@@ -26,7 +32,11 @@ export function renderWorkout(ctx) {
     h(
       'div',
       { class: 'card__head' },
-      h('div', {}, h('p', { class: 'eyebrow' }, g ? `📍 ${g.name}` : 'Workout'), h('h2', { class: 'plan-title' }, a.name)),
+      h('div', {},
+        st.gyms.length
+          ? h('button', { class: 'eyebrow linkish', type: 'button', 'aria-label': `Gym: ${gymName(a.gymId)}. Change gym`, onClick: changeGym }, `📍 ${gymName(a.gymId)} ▾`)
+          : h('p', { class: 'eyebrow' }, 'Workout'),
+        h('h2', { class: 'plan-title' }, a.name)),
       h('span', { class: 'clock mono', 'data-elapsed': a.startedAt }, fmtSecs((Date.now() - a.startedAt) / 1000)),
     ),
     h(
@@ -136,7 +146,7 @@ function openEntry(ctx, a, entry, i, st) {
   const head = h(
     'div',
     { class: 'entry__head' },
-    h('div', {}, h('h3', { class: 'entry__title' }, ex.name), h('p', { class: 'muted small' }, targetText(entry.target, ex), entry.target.rest && ex.track !== 'cardio' ? ` · rest ${fmtSecs(entry.target.rest)}` : '', entry.plannedEx !== entry.ex ? ` · swapped for ${exercise(entry.plannedEx).name}` : '')),
+    h('div', {}, h('h3', { class: 'entry__title' }, ex.name), h('p', { class: 'muted small' }, targetText(entry.target, ex), entry.target.rest && ex.track !== 'cardio' ? ` · rest ${fmtSecs(entry.target.rest)}` : '', entry.autoSwap ? ` · ${exercise(entry.plannedEx).name} is not at this gym` : entry.plannedEx !== entry.ex ? ` · swapped for ${exercise(entry.plannedEx).name}` : '', entry.unavailable ? ' · not at this gym — swap or skip' : '')),
   );
 
   const tools = h(
