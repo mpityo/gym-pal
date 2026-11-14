@@ -7,10 +7,10 @@ A workout tracker for any gym with machines, cables and dumbbells. It's a static
 | Tab | What it's for |
 | --- | --- |
 | **Today** | Shows the week at a glance and today's workout from the plan, with a suggested weight for every lift and where each machine is in your gym. Tap Start. |
-| **Workout** | Live during a session. Big +/− steppers for weight and reps, a rest timer that beeps and vibrates — even if you've switched to Machines or another tab — and a **Swap** button for when a machine is taken. It also has a how-to for every exercise, a plank stopwatch, treadmill time and distance, and live heart rate. |
+| **Workout** | Live during a session. Big +/− steppers for weight and reps (tap a logged set to fix a typo without losing its time), a rest timer that beeps and vibrates — even if you've switched to Machines or another tab — and a **Swap** button for when a machine is taken. It also has a how-to for every exercise, a plank stopwatch, treadmill time and distance, and live heart rate. |
 | **Machines** | 59 machines and exercises, each with a reference photo (start and end position) and room for your own photo of the actual machine at each gym, what it looks like, how to set it up, form cues, common mistakes and good swaps. You can save notes on where each one is and your seat or pad settings, per gym, and mark one as not at your gym. Each page also shows your history and strength trend for that exercise. |
 | **Stats** | Total weight moved (with a real-world comparison), sets per muscle this week against the 10-set target, weekly volume, pushed/pulled/legs split, strength trends, personal records, machine usage, swaps, rest times, a training heatmap, mile-run pace, and Galaxy Watch heart-rate zones, calories, steps, sleep and daily low heart rate. |
-| **History** | Every workout with its sets, gym, duration and heart rate. |
+| **History** | Every workout with its sets, gym, duration and heart rate. Tap **Edit** to fix sets, exercises, notes, gym, date or duration after the fact, or **+ Log a past workout** to record one you did without the phone. Deletes can be undone from the toast. |
 | **Setup** | Bodyweight and age, 4-day or 3-day plan, rest-timer and background-notification toggles, gyms (add, rename, re-locate, copy notes), watch import, Bluetooth heart rate, Claude key, and backup/restore. |
 
 ### The plan

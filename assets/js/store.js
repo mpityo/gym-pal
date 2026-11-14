@@ -365,9 +365,20 @@ export function logSet(entryIndex, set) {
   });
 }
 
+/** Returns the removed set (for Undo with insertSet), or null. */
 export function removeSet(entryIndex, setIndex) {
+  let removed = null;
   update((s) => {
-    s.active?.entries[entryIndex]?.sets.splice(setIndex, 1);
+    [removed = null] = s.active?.entries[entryIndex]?.sets.splice(setIndex, 1) ?? [];
+  });
+  return removed;
+}
+
+/** Puts a set back at its old position in the workout in progress (Undo). */
+export function insertSet(entryIndex, setIndex, set) {
+  update((s) => {
+    const sets = s.active?.entries[entryIndex]?.sets;
+    if (sets && set) sets.splice(Math.min(setIndex, sets.length), 0, set);
   });
 }
 
@@ -399,15 +410,19 @@ export function skipEntry(entryIndex, skipped = true) {
   });
 }
 
+/** The target an exercise gets when it is added by hand. */
+function defaultItem(exId, ex) {
+  return ex.track === 'cardio'
+    ? { ex: exId, sets: 1, minutes: 10 }
+    : ex.track === 'time'
+      ? { ex: exId, sets: 3, secs: [30, 60], rest: 60 }
+      : { ex: exId, sets: 3, reps: [8, 12], rest: 90 };
+}
+
 export function addEntry(exId) {
   const ex = exercise(exId);
   if (!ex) return;
-  const item =
-    ex.track === 'cardio'
-      ? { ex: exId, sets: 1, minutes: 10 }
-      : ex.track === 'time'
-        ? { ex: exId, sets: 3, secs: [30, 60], rest: 60 }
-        : { ex: exId, sets: 3, reps: [8, 12], rest: 90 };
+  const item = defaultItem(exId, ex);
   update((s) => {
     if (!s.active) return;
     s.active.entries.push(entryFor(item));
@@ -493,11 +508,134 @@ export function discardSession() {
   });
 }
 
+// ── Editing finished workouts (spec 12) ────────────────────────────────
+// Every stat is derived from state.sessions on render, so edits flow into
+// records, suggestions and charts with no recalculation step. Several
+// metrics assume oldest-first (exerciseHistory, suggest, runs), so the list
+// is re-sorted after anything that can move a session in time.
+
+function sortSessions(s) {
+  s.sessions.sort((a, b) => a.startedAt - b.startedAt);
+}
+
+function findSession(s, id) {
+  return s.sessions.find((y) => y.id === id) ?? null;
+}
+
+/** patch: name, notes, gymId, startedAt, endedAt, crowd, … No-op for an unknown id. */
 export function updateSession(id, patch) {
   update((s) => {
-    const x = s.sessions.find((y) => y.id === id);
-    if (x) Object.assign(x, patch);
+    const x = findSession(s, id);
+    if (!x) return;
+    Object.assign(x, patch);
+    if ('startedAt' in patch || 'endedAt' in patch) sortSessions(s);
   });
+}
+
+export function getSession(id) {
+  return state.sessions.find((y) => y.id === id) ?? null;
+}
+
+export function editSessionSet(id, entryIndex, setIndex, patch) {
+  update((s) => {
+    const set = findSession(s, id)?.entries[entryIndex]?.sets[setIndex];
+    if (set) Object.assign(set, patch);
+  });
+}
+
+/**
+ * Removes one set. When it was the entry's last set the entry goes too, and
+ * when that was the session's last entry the session goes. Returns what was
+ * removed ({ set, entry, session }) so the caller can offer Undo with
+ * restoreSession(), or null for unknown ids.
+ */
+export function removeSessionSet(id, entryIndex, setIndex) {
+  let removed = null;
+  update((s) => {
+    const x = findSession(s, id);
+    const entry = x?.entries[entryIndex];
+    if (!entry || !entry.sets[setIndex]) return;
+    const [set] = entry.sets.splice(setIndex, 1);
+    removed = { set, entry: null, session: null };
+    if (!entry.sets.length) {
+      x.entries.splice(entryIndex, 1);
+      removed.entry = entry;
+      if (!x.entries.length) {
+        s.sessions = s.sessions.filter((y) => y.id !== id);
+        removed.session = x;
+      }
+    }
+  });
+  return removed;
+}
+
+/** Sets added afterwards have no time (`at: null`); rest averages skip them. */
+export function addSessionSet(id, entryIndex, set) {
+  update((s) => {
+    const entry = findSession(s, id)?.entries[entryIndex];
+    if (entry) entry.sets.push({ ...set, at: null });
+  });
+}
+
+/** Adds an exercise (with the usual default target) to a finished session. Returns its index, or -1. */
+export function addSessionEntry(id, exId) {
+  const ex = exercise(exId);
+  let index = -1;
+  if (!ex) return index;
+  update((s) => {
+    const x = findSession(s, id);
+    if (!x) return;
+    x.entries.push(entryFor(defaultItem(exId, ex)));
+    index = x.entries.length - 1;
+  });
+  return index;
+}
+
+/** Removes an exercise from a finished session. Returns the removed entry, or null. */
+export function removeSessionEntry(id, entryIndex) {
+  let removed = null;
+  update((s) => {
+    const x = findSession(s, id);
+    if (!x?.entries[entryIndex]) return;
+    [removed] = x.entries.splice(entryIndex, 1);
+  });
+  return removed;
+}
+
+/** Put a whole session back as it was (Undo): replaces the one with the same id, or re-inserts it. */
+export function restoreSession(snapshot) {
+  if (!snapshot?.id) return;
+  const copy = JSON.parse(JSON.stringify(snapshot));
+  update((s) => {
+    s.sessions = s.sessions.filter((y) => y.id !== copy.id);
+    s.sessions.push(copy);
+    sortSessions(s);
+  });
+}
+
+/**
+ * A workout done without the phone: a finished session for a past date,
+ * flagged `manual: true`, with no entries yet. Never touches `active`.
+ */
+export function addPastSession({ planId = null, startedAt, endedAt }) {
+  const plan = planId ? PLAN_BY_ID[planId] : null;
+  const session = {
+    id: uid(),
+    planId: plan ? planId : null,
+    name: plan?.name ?? 'Freestyle',
+    startedAt,
+    endedAt,
+    gymId: null,
+    geo: null,
+    entries: [],
+    hr: [],
+    manual: true,
+  };
+  update((s) => {
+    s.sessions.push(session);
+    sortSessions(s);
+  });
+  return session;
 }
 
 export function deleteSession(id) {
