@@ -80,7 +80,14 @@ export function renderMachines(ctx) {
 }
 
 function photoButton(ctx) {
-  const file = h('input', { type: 'file', accept: 'image/*', capture: 'environment', hidden: true, onChange: (e) => identify(e.target.files[0], ctx) });
+  const file = h('input', {
+    type: 'file', accept: 'image/*', capture: 'environment', hidden: true,
+    onChange: (e) => {
+      const chosen = e.target.files[0];
+      e.target.value = '';
+      identify(chosen, ctx);
+    },
+  });
   return h('span', {}, file, h('button', { class: 'btn btn--primary', type: 'button', onClick: () => file.click() }, 'Photo'));
 }
 

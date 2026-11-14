@@ -1,8 +1,8 @@
-import { h, toast, fmtRel } from '../util.js';
+import { h, toast, fmtRel, download } from '../util.js';
 import * as store from '../store.js';
 import { PLANS, PLAN_BY_ID, WEEK } from '../data/plans.js';
 import { exercise } from '../data/exercises.js';
-import { suggest, weekStart, dayKey, sessionSummary, muscleSets, addDays, fmtLb, fmtDuration } from '../metrics.js';
+import { suggest, weekStart, dayKey, sessionSummary, muscleSets, addDays, fmtLb, fmtDuration, shouldShowBackupReminder } from '../metrics.js';
 import { targetText } from './common.js';
 import { MUSCLES } from '../data/exercises.js';
 
@@ -181,6 +181,38 @@ export function renderToday(ctx) {
         ),
         low.length > 0 && h('p', { class: 'muted small' }, `Under 10 sets so far: ${low.join(', ')}. That is fine mid-week — see Stats for the full picture.`),
       ),
+
+    shouldShowBackupReminder(st, now) &&
+      h(
+        'section',
+        { class: 'card card--tip' },
+        h('h2', { class: 'card__title' }, 'Back up your data'),
+        h('p', {}, `You have ${st.sessions.length} workouts that are only on this phone. Export a backup.`),
+        h(
+          'div',
+          { class: 'row row--wrap' },
+          h('button', {
+            class: 'btn btn--primary',
+            type: 'button',
+            onClick: () => {
+              download(`gym-pal-backup-${new Date().toISOString().slice(0, 10)}.json`, store.exportJson());
+              store.recordBackupExported();
+              toast('Backup exported');
+              ctx.rerender();
+            },
+          }, 'Export backup'),
+          h('button', {
+            class: 'btn btn--ghost',
+            type: 'button',
+            onClick: () => {
+              store.snoozeBackupReminder();
+              toast('Reminding again in 7 days');
+              ctx.rerender();
+            },
+          }, 'Later'),
+        ),
+      ),
+
     st.sessions.length === 0 &&
       !a &&
       h(

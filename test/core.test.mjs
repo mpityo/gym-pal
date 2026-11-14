@@ -269,3 +269,27 @@ test('unzip reads deflated entries', async () => {
   assert.equal(out.length, 1);
   assert.equal(out[0].text, EX_CSV);
 });
+
+test('shouldShowBackupReminder waits for 5 sessions, then nudges until backed up', () => {
+  const sessionsN = (n) => Array.from({ length: n }, (_, i) => session(i, []));
+  const base = { sessions: sessionsN(4), prefs: {} };
+  assert.equal(m.shouldShowBackupReminder(base), false); // under 5 sessions
+
+  const fiveNoBackup = { sessions: sessionsN(5), prefs: {} };
+  assert.equal(m.shouldShowBackupReminder(fiveNoBackup), true); // never backed up
+
+  const justBackedUp = { sessions: sessionsN(5), prefs: { lastBackupAt: Date.now(), lastBackupSessionCount: 5 } };
+  assert.equal(m.shouldShowBackupReminder(justBackedUp), false);
+
+  const fourNewSinceBackup = { sessions: sessionsN(9), prefs: { lastBackupAt: Date.now(), lastBackupSessionCount: 5 } };
+  assert.equal(m.shouldShowBackupReminder(fourNewSinceBackup), false); // only 4 new
+
+  const fiveNewSinceBackup = { sessions: sessionsN(10), prefs: { lastBackupAt: Date.now(), lastBackupSessionCount: 5 } };
+  assert.equal(m.shouldShowBackupReminder(fiveNewSinceBackup), true); // 5 new
+
+  const snoozed = { sessions: sessionsN(5), prefs: { backupSnoozeUntil: Date.now() + 86400000 } };
+  assert.equal(m.shouldShowBackupReminder(snoozed), false);
+
+  const snoozeExpired = { sessions: sessionsN(5), prefs: { backupSnoozeUntil: Date.now() - 1000 } };
+  assert.equal(m.shouldShowBackupReminder(snoozeExpired), true);
+});

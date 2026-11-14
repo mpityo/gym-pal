@@ -41,6 +41,13 @@ export const defaultState = () => ({
     restAlert: true,
     keepAwake: true,
     autoRest: true,
+    /** Have we ever asked the browser to persist storage (navigator.storage.persist)? */
+    persistAsked: false,
+    /** When "Export backup" was last used, and how many sessions existed then. */
+    lastBackupAt: null,
+    lastBackupSessionCount: 0,
+    /** Today's backup-reminder card is hidden until this time, if set. */
+    backupSnoozeUntil: null,
     restNotify: false,
   },
 });
@@ -70,20 +77,64 @@ function persist() {
   saveTimer = setTimeout(flush, 150);
 }
 
+/**
+ * The most recent save failure, or null. Not persisted itself — it only
+ * describes what happened in this running session, since a failed save by
+ * definition never made it to disk.
+ */
+let saveError = null;
+
+/**
+ * Write the current state to localStorage. Returns true/false instead of
+ * swallowing the error, so callers (app.js) can show a sticky banner instead
+ * of silently losing data once the quota (~5 MB) is hit.
+ */
 export function flush() {
   clearTimeout(saveTimer);
   try {
     localStorage.setItem(KEY, JSON.stringify(state));
+    saveError = null;
+    notify();
+    return true;
   } catch (err) {
+    // The undo snapshot from a restore/erase roughly doubles what is stored.
+    // Saving the real data matters more, so give that space up and retry once.
+    if (dropPrevious()) {
+      try {
+        localStorage.setItem(KEY, JSON.stringify(state));
+        saveError = null;
+        notify();
+        return true;
+      } catch {
+        // fall through to the failure path
+      }
+    }
     console.warn('Could not save', err);
+    saveError = { name: err?.name ?? 'Error', at: Date.now() };
+    notify();
+    return false;
   }
+}
+
+/** { ok: true, error: null } or { ok: false, error: { name, at } }. */
+export function saveStatus() {
+  return { ok: !saveError, error: saveError };
+}
+
+/** Roughly how much of the ~5 MB localStorage quota the current state uses. */
+export function storageEstimate() {
+  return { bytes: JSON.stringify(state).length };
 }
 
 globalThis.addEventListener?.('pagehide', flush);
 
+function notify() {
+  for (const fn of listeners) fn(state);
+}
+
 function commit() {
   persist();
-  for (const fn of listeners) fn(state);
+  notify();
 }
 
 export function subscribe(fn) {
@@ -103,6 +154,12 @@ export function replaceState(next) {
 export function update(fn) {
   fn(state);
   commit();
+}
+
+/** Test-only: swap the live state wholesale, bypassing localStorage. */
+export function _resetForTests(next = defaultState()) {
+  state = next;
+  saveError = null;
 }
 
 const uid = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
@@ -330,6 +387,7 @@ export function setSessionNotes(text) {
 
 export function finishSession() {
   let finished = null;
+  let shouldAskPersist = false;
   update((s) => {
     if (!s.active) return;
     finished = { ...s.active, endedAt: Date.now() };
@@ -339,8 +397,26 @@ export function finishSession() {
     finished.entries = finished.entries.filter((e) => e.sets.length);
     if (finished.entries.length) s.sessions.push(finished);
     s.active = null;
+    if (!s.prefs.persistAsked) {
+      s.prefs.persistAsked = true;
+      shouldAskPersist = true;
+    }
   });
+  if (shouldAskPersist) requestPersistentStorage();
   return finished;
+}
+
+/**
+ * Ask the browser to keep this site's storage around under pressure, once
+ * the first workout is finished. Fire-and-forget: there is nothing to show
+ * either way (no UI if granted, nothing else changes if denied).
+ */
+function requestPersistentStorage() {
+  try {
+    navigator.storage?.persist?.();
+  } catch {
+    /* not supported */
+  }
 }
 
 export function discardSession() {
@@ -363,18 +439,149 @@ export function setWatch(watch) {
 
 // ── Backup ───────────────────────────────────────────────────────────────
 
+const PREV_KEY = 'gym-pal.v1.prev';
+
 export function exportJson() {
   return JSON.stringify({ app: 'gym-pal', exportedAt: new Date().toISOString(), state }, null, 1);
 }
 
-export function importJson(text) {
-  const data = JSON.parse(text);
-  const next = data?.state ?? data;
-  if (!Array.isArray(next?.sessions)) throw new Error('That file is not a Gym Pal backup.');
-  replaceState(next);
+/** Call once "Export backup" has actually produced a file, to drive the Today reminder. */
+export function recordBackupExported() {
+  update((s) => {
+    s.prefs.lastBackupAt = Date.now();
+    s.prefs.lastBackupSessionCount = s.sessions.length;
+  });
 }
 
-/** Test-only: replace state with no persistence and no listener notification. */
-export function _resetForTests(next = defaultState()) {
-  state = next;
+/** "Later" on the Today backup-reminder card: hide it for a week. */
+export function snoozeBackupReminder(days = 7) {
+  update((s) => {
+    s.prefs.backupSnoozeUntil = Date.now() + days * 86400000;
+  });
+}
+
+/**
+ * Parse and check a backup file *before* anything is replaced. Accepts the
+ * export wrapper `{ app, exportedAt, state }` or a bare state object.
+ * Malformed sessions/entries are dropped and counted rather than failing the
+ * whole file, so one bad entry does not block the rest of the data.
+ */
+export function validateBackup(raw) {
+  let data;
+  try {
+    data = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } catch {
+    return { ok: false, error: 'That file is not valid JSON.', summary: null, state: null };
+  }
+
+  const isWrapper = data && typeof data === 'object' && !Array.isArray(data) && data.state && typeof data.state === 'object' && !Array.isArray(data.state);
+  const candidate = isWrapper ? data.state : data;
+  const exportedAt = isWrapper && typeof data.exportedAt === 'string' ? data.exportedAt : null;
+
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) || !Array.isArray(candidate.sessions)) {
+    return { ok: false, error: 'That file is not a Gym Pal backup.', summary: null, state: null };
+  }
+
+  let droppedSessions = 0;
+  let droppedEntries = 0;
+  const sessions = [];
+  for (const s of candidate.sessions) {
+    if (!s || typeof s !== 'object' || typeof s.startedAt !== 'number' || !Array.isArray(s.entries)) {
+      droppedSessions += 1;
+      continue;
+    }
+    const entries = [];
+    for (const e of s.entries) {
+      if (!e || typeof e !== 'object' || typeof e.ex !== 'string' || !Array.isArray(e.sets)) {
+        droppedEntries += 1;
+        continue;
+      }
+      entries.push(e);
+    }
+    sessions.push({ ...s, entries });
+  }
+
+  const lastAt = sessions.reduce((max, s) => Math.max(max, s.startedAt), 0) || null;
+  return {
+    ok: true,
+    error: null,
+    state: { ...candidate, sessions },
+    summary: { sessions: sessions.length, lastAt, exportedAt, droppedSessions, droppedEntries },
+  };
+}
+
+/** Remove the restore/erase undo snapshot. True if there was one. */
+function dropPrevious() {
+  try {
+    if (localStorage.getItem(PREV_KEY) == null) return false;
+    localStorage.removeItem(PREV_KEY);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Best-effort snapshot of the current state, so a restore/erase can be undone. */
+function savePrevious() {
+  try {
+    localStorage.setItem(PREV_KEY, JSON.stringify(state));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Replace the state with `next` (already validated), keeping an undo copy. */
+export function restoreBackup(next) {
+  const savedPrev = savePrevious();
+  replaceState(next);
+  return { savedPrev };
+}
+
+/** Same undo copy as restoreBackup, for "Erase everything". */
+export function eraseAll() {
+  return restoreBackup(defaultState());
+}
+
+/** Undo the last restore/erase. Returns false if there is nothing to undo. */
+export function restorePrevious() {
+  try {
+    const raw = localStorage.getItem(PREV_KEY);
+    if (!raw) return false;
+    const prev = JSON.parse(raw);
+    replaceState(prev);
+    localStorage.removeItem(PREV_KEY);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function importJson(text) {
+  const result = validateBackup(text);
+  if (!result.ok) throw new Error(result.error);
+  replaceState(result.state);
+}
+
+/**
+ * The watch import can add megabytes of per-day data. If adding `watch` to
+ * the current state would push it past `maxChars` (close to the ~5 MB
+ * localStorage quota, minus headroom for everything else), drop the oldest
+ * days until it fits.
+ */
+export function trimWatchToFit(nextState, maxChars = 4_000_000) {
+  const watch = nextState?.watch;
+  if (!watch?.days) return { state: nextState, droppedDays: 0 };
+  if (JSON.stringify(nextState).length <= maxChars) return { state: nextState, droppedDays: 0 };
+
+  const days = { ...watch.days };
+  const order = Object.keys(days).sort();
+  let dropped = 0;
+  let trimmed = { ...nextState, watch: { ...watch, days } };
+  while (order.length && JSON.stringify(trimmed).length > maxChars) {
+    delete days[order.shift()];
+    dropped += 1;
+    trimmed = { ...nextState, watch: { ...watch, days } };
+  }
+  return { state: trimmed, droppedDays: dropped };
 }
