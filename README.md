@@ -62,9 +62,9 @@ Everything is stored in the browser on your phone (localStorage). To move to a n
 
 ```sh
 python3 -m http.server 8000   # then open http://localhost:8000
-npm test                      # node --test: metrics, progression, rest timer, Samsung parsing, zip, BLE parsing
+npm test                      # node --test: metrics, progression, Samsung parsing, zip, BLE parsing, store, today's plan, util
 ```
 
-Every push to `main` runs the tests and deploys to GitHub Pages (`.github/workflows/deploy-pages.yml`). For the first deploy, set **Settings → Pages → Source** to **GitHub Actions**.
+A `Tests` check (`.github/workflows/test.yml`) runs `npm test` on every pull request. Every push to `main` also runs the tests and deploys to GitHub Pages (`.github/workflows/deploy-pages.yml`). For the first deploy, set **Settings → Pages → Source** to **GitHub Actions**.
 
 Not medical advice. Stop any exercise that causes pain.

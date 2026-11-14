@@ -3,7 +3,10 @@ import * as store from '../store.js';
 import * as ai from '../ai.js';
 import * as hr from '../hr.js';
 import { readFiles, buildWatch } from '../samsung.js';
-import { maxHr } from '../metrics.js';
+import { maxHr, parseAmount } from '../metrics.js';
+
+// Reasonable bounds for free-typed profile numbers.
+const BOUNDS = { bodyweight: [50, 700], age: [10, 100], maxHr: [100, 230] };
 
 export function renderSetup(ctx) {
   const st = store.getState();
@@ -13,7 +16,25 @@ export function renderSetup(ctx) {
     h('label', { class: 'field' },
       h('span', {}, label),
       h('span', { class: 'field__row' },
-        h('input', { class: 'input mono', type: 'text', inputMode: 'decimal', value: p[key] ?? '', onChange: (e) => { const v = e.target.value.trim(); store.setProfile({ [key]: v ? Number(v) : null }); ctx.rerender(); } }),
+        h('input', {
+          class: 'input mono',
+          type: 'text',
+          inputMode: 'decimal',
+          value: p[key] ?? '',
+          onChange: (e) => {
+            const v = e.target.value.trim();
+            if (!v) { store.setProfile({ [key]: null }); ctx.rerender(); return; }
+            const [lo, hi] = BOUNDS[key] ?? [0, Infinity];
+            const n = parseAmount(v);
+            if (n === null || n < lo || n > hi) {
+              toast('Enter a number');
+              e.target.value = p[key] ?? '';
+              return;
+            }
+            store.setProfile({ [key]: n });
+            ctx.rerender();
+          },
+        }),
         unit && h('span', { class: 'muted' }, unit),
       ),
       hint && h('span', { class: 'field__hint' }, hint),
