@@ -338,6 +338,7 @@ textarea.input { resize: vertical; }
 .chat__msg--user { justify-self: end; background: var(--brand); color: #fff; }
 .chat__msg--assistant { justify-self: start; background: var(--surface-2); }
 .chat__msg.is-thinking { animation: pulse 1.2s infinite; }
+.chat__error { color: var(--alert); }
 .chat__compose { display: grid; grid-template-columns: 1fr auto; gap: 0.5rem; align-items: end; }
 
 /* ── Modal & toast ──────────────────────────────────────────────────── */
