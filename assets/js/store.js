@@ -77,7 +77,7 @@ export function flush() {
   }
 }
 
-window.addEventListener?.('pagehide', flush);
+globalThis.addEventListener?.('pagehide', flush);
 
 function commit() {
   persist();
@@ -356,4 +356,9 @@ export function importJson(text) {
   const next = data?.state ?? data;
   if (!Array.isArray(next?.sessions)) throw new Error('That file is not a Gym Pal backup.');
   replaceState(next);
+}
+
+/** Test-only: replace state with no persistence and no listener notification. */
+export function _resetForTests(next = defaultState()) {
+  state = next;
 }
