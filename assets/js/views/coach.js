@@ -21,8 +21,11 @@ function context(extra = {}) {
   const ms = muscleSets(st.sessions, wk, addDays(wk, 7));
   const about = extra.about ? exerciseOr(extra.about) : null;
   const tp = !a ? todayPlan(st) : null;
+  const gid = store.currentGym();
+  const g = gid && store.gym(gid);
   return {
     profile: { bodyweightLb: bw, age: st.profile.age },
+    gym: g ? { name: g.name, chain: g.chain || undefined, missingHere: store.missingAt(gid) } : null,
     plan: st.prefs.mode === '3day' ? '3-day full body' : '4-day upper/lower (Mon Upper A, Tue Lower A, Thu Upper B, Fri Lower B)',
     askingAbout: about ? { id: about.id, name: about.name, setup: about.setup, cues: about.cues, alternatives: about.alts.map((x) => exerciseOr(x).name), myNotes: store.machineNote(about.id), records: exerciseRecords(st.sessions, about.id, bw) } : undefined,
     workoutInProgress: a

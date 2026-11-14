@@ -3,7 +3,7 @@ import * as store from '../store.js';
 import { PLANS, PLAN_BY_ID, WEEK } from '../data/plans.js';
 import { exerciseOr } from '../data/exercises.js';
 import { suggest, weekStart, dayKey, sessionSummary, muscleSets, addDays, fmtLb, fmtDuration, shouldShowBackupReminder } from '../metrics.js';
-import { targetText } from './common.js';
+import { targetText, pickGym, gymChip } from './common.js';
 import { MUSCLES } from '../data/exercises.js';
 
 /** Which plan today is, and which plans this week are still undone. */
@@ -45,17 +45,18 @@ export function todayPlan(state, now = Date.now()) {
   return { planId: missed[0] ?? upcoming, rest: true, restNote: entry?.note, doneToday, missed, weekDone, weekTarget, extra, label: missed.length ? 'Catch up' : 'Next' };
 }
 
+/** { gymId, geo, certain }: certain only when GPS puts you inside a saved gym. */
 async function locate() {
   const st = store.getState();
   const withCoords = st.gyms.filter((g) => g.lat != null);
-  if (!withCoords.length || !navigator.geolocation) return { gymId: st.gyms[0]?.id ?? null, geo: null };
+  if (!withCoords.length || !navigator.geolocation) return { gymId: null, geo: null, certain: false };
   try {
     const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 6000, maximumAge: 120000 }));
     const geo = { lat: +pos.coords.latitude.toFixed(5), lng: +pos.coords.longitude.toFixed(5), acc: Math.round(pos.coords.accuracy) };
     const g = store.nearestGym(geo);
-    return { gymId: g?.id ?? null, geo };
+    return { gymId: g?.id ?? null, geo, certain: !!g };
   } catch {
-    return { gymId: st.gyms[0]?.id ?? null, geo: null };
+    return { gymId: null, geo: null, certain: false };
   }
 }
 
@@ -77,12 +78,23 @@ export async function start(planId, ctx, btn) {
   }
   try {
     const where = await locate();
+    const gyms = store.getState().gyms;
+    if (!where.certain) {
+      if (gyms.length >= 2) {
+        const picked = await pickGym({ current: store.currentGym(), intro: 'Your location did not match a saved gym. Notes and swaps follow the gym you pick.' });
+        if (picked === undefined) return;
+        where.gymId = picked;
+      } else if (gyms.length === 1) {
+        where.gymId = gyms[0].id;
+      }
+    }
     if (store.active()) {
       // A session appeared while we were locating (e.g. resumed elsewhere).
       ctx.go('workout');
       return;
     }
-    store.startSession(planId, where);
+    if (gyms.length) store.setCurrentGym(where.gymId);
+    store.startSession(planId, { gymId: where.gymId, geo: where.geo });
     const g = where.gymId && store.gym(where.gymId);
     toast(g ? `Started at ${g.name}` : 'Workout started');
     ctx.go('workout');
@@ -144,7 +156,11 @@ export function renderToday(ctx) {
           'button',
           { class: 'preview__name linkish', type: 'button', onClick: () => ctx.go(`machine/${item.ex}`) },
           ex.name,
-          item.swappedFrom && h('span', { class: 'tag' }, 'swapped'),
+          item.autoSwap
+            ? h('span', { class: 'tag' }, 'not at this gym → swapped')
+            : item.unavailable
+              ? h('span', { class: 'tag tag--warn' }, 'not at this gym')
+              : item.swappedFrom && h('span', { class: 'tag' }, 'swapped'),
         ),
         h('span', { class: 'preview__target' }, targetText({ sets: item.sets, reps: item.reps, secs: item.secs, miles: item.miles, minutes: item.minutes }, ex)),
         sug?.text && ex.track !== 'cardio' && h('span', { class: `preview__sug${sug.up ? ' is-up' : ''}` }, sug.up ? `↑ ${sug.text}` : sug.text),
@@ -154,6 +170,7 @@ export function renderToday(ctx) {
   );
 
   const a = store.active();
+  const chip = gymChip(ctx);
   return h(
     'div',
     { class: 'page' },
@@ -164,6 +181,7 @@ export function renderToday(ctx) {
         h('div', { class: 'card__head' }, h('h2', { class: 'card__title' }, `${a.name} in progress`), h('span', { class: 'mono', 'data-elapsed': a.startedAt })),
         h('button', { class: 'btn btn--primary btn--block', type: 'button', onClick: () => ctx.go('workout') }, 'Resume workout'),
       ),
+    chip && h('div', { class: 'row row--wrap' }, chip),
     h('section', { class: 'card' }, h('div', { class: 'card__head' }, h('h2', { class: 'card__title' }, 'This week'), h('span', { class: 'muted mono' }, `${plan.weekDone}/${plan.weekTarget} workouts${plan.extra ? ` · +${plan.extra} extra` : ''}`)), strip),
 
     !a &&

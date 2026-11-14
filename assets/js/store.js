@@ -3,14 +3,15 @@
  *
  * The exercise library and plans ship with the site and are never written to.
  * What is stored is what only you can produce: the sessions you logged, your
- * notes about where machines are and how you set them up, your swaps, your
- * profile, and whatever you imported from Samsung Health.
+ * notes about where machines are and how you set them up (per gym), your
+ * swaps, your profile, and whatever you imported from Samsung Health.
  *
  * The Claude key is NOT in here. It lives in its own slot (see ai.js) so it can
  * never end up in an exported backup.
  */
 import { PLAN_BY_ID } from './data/plans.js';
 import { exercise } from './data/exercises.js';
+import * as G from './gyms.js';
 import { adjustRest as adjustRestPure } from './metrics.js';
 
 const KEY = 'gym-pal.v1';
@@ -28,10 +29,12 @@ export const defaultState = () => ({
     maxHr: null, // override; otherwise estimated from age
     restingHr: null,
   },
-  /** saved gyms: { id, name, lat, lng } */
+  /** saved gyms: { id, name, lat, lng, chain?, address? } */
   gyms: [],
-  /** exercise id -> { where, settings } — your notes, e.g. "back wall by mirrors", "seat 4" */
+  /** exercise id -> { where, settings } — the any-gym default, e.g. "back wall by mirrors", "seat 4" */
   machineNotes: {},
+  /** gymId -> exercise id -> { where?, settings?, missing? } — what is true at that gym; wins over machineNotes */
+  gymNotes: {},
   /** planId -> { [itemIndex]: exerciseId } — permanent swaps */
   swaps: {},
   /** Samsung Health import, see samsung.js */
@@ -41,6 +44,8 @@ export const defaultState = () => ({
     restAlert: true,
     keepAwake: true,
     autoRest: true,
+    /** the gym shown outside a workout; null means none picked */
+    currentGymId: null,
     /** Have we ever asked the browser to persist storage (navigator.storage.persist)? */
     persistAsked: false,
     /** When "Export backup" was last used, and how many sessions existed then. */
@@ -176,14 +181,18 @@ export function setPref(key, value) {
   });
 }
 
-export function machineNote(exId) {
-  return state.machineNotes[exId] ?? { where: '', settings: '' };
+/** { where, settings, missing } for the exercise at a gym (default: the current gym). */
+export function machineNote(exId, gymId = currentGym()) {
+  return G.mergedNote(state, exId, gymId);
 }
 
-export function setMachineNote(exId, patch) {
-  update((s) => {
-    s.machineNotes[exId] = { ...machineNote(exId), ...patch };
-  });
+/** patch: { where?, settings?, missing? }. Without a gym it edits the any-gym default. */
+export function setMachineNote(exId, patch, gymId = currentGym()) {
+  update((s) => G.writeNote(s, exId, patch, gymId));
+}
+
+export function isMissing(exId, gymId = currentGym()) {
+  return G.isMissing(state, exId, gymId);
 }
 
 // ── Gyms ─────────────────────────────────────────────────────────────────
@@ -194,14 +203,45 @@ export function addGym(gym) {
   return g;
 }
 
-export function removeGym(id) {
+export function updateGym(id, patch) {
   update((s) => {
-    s.gyms = s.gyms.filter((g) => g.id !== id);
+    const g = s.gyms.find((x) => x.id === id);
+    if (g) Object.assign(g, patch);
   });
+}
+
+export function removeGym(id) {
+  update((s) => G.dropGym(s, id));
 }
 
 export function gym(id) {
   return state.gyms.find((g) => g.id === id) ?? null;
+}
+
+/** Id of the gym in use now, or null. */
+export function currentGym() {
+  return G.currentGymId(state);
+}
+
+export function setCurrentGym(id) {
+  setPref('currentGymId', id ?? null);
+}
+
+export function gymsByRecent() {
+  return G.gymsByRecent(state);
+}
+
+export function missingAt(gymId = currentGym()) {
+  return G.missingIds(state, gymId);
+}
+
+/** Start a gym's notes from another gym's. Notes already written at the target are kept. */
+export function copyGymNotes(fromId, toId) {
+  update((s) => {
+    const from = s.gymNotes[fromId] ?? {};
+    const to = (s.gymNotes[toId] ??= {});
+    for (const [exId, note] of Object.entries(from)) to[exId] = { ...note, ...to[exId] };
+  });
 }
 
 /** Metres between two lat/lng points (haversine). */
@@ -227,13 +267,9 @@ export function nearestGym(pos) {
 
 // ── Plans with your swaps applied ────────────────────────────────────────
 
-export function planItems(planId) {
-  const plan = PLAN_BY_ID[planId];
-  if (!plan) return [];
-  const swaps = state.swaps[planId] ?? {};
-  // A swap pointing at an id no longer in the library (exercise renamed/removed
-  // since the swap was saved) is ignored; the plan's own exercise is used instead.
-  return plan.items.map((item, i) => (swaps[i] && exercise(swaps[i]) ? { ...item, ex: swaps[i], swappedFrom: item.ex } : item));
+/** Items with permanent swaps applied and anything missing at the gym auto-swapped. */
+export function planItems(planId, gymId = currentGym()) {
+  return G.resolvePlanItems(PLAN_BY_ID[planId], state.swaps[planId], (exId) => G.isMissing(state, exId, gymId));
 }
 
 export function setPermanentSwap(planId, index, exId) {
@@ -247,7 +283,7 @@ export function setPermanentSwap(planId, index, exId) {
 // ── The session in progress ──────────────────────────────────────────────
 
 export function startSession(planId, { gymId = null, geo = null } = {}) {
-  const items = planId ? planItems(planId) : [];
+  const items = planId ? planItems(planId, gymId) : [];
   const now = Date.now();
   update((s) => {
     s.active = {
@@ -281,9 +317,32 @@ function entryFor(item, planIndex = null) {
       miles: item.miles ?? null,
       note: item.note ?? null,
     },
+    autoSwap: item.autoSwap || undefined,
+    unavailable: item.unavailable || undefined,
     sets: [],
     skipped: false,
   };
+}
+
+/**
+ * Move the workout in progress to another gym. Plan entries you have not
+ * touched (no sets, not swapped by hand) are re-picked for the new gym.
+ */
+export function setSessionGym(gymId) {
+  update((s) => {
+    const a = s.active;
+    if (!a) return;
+    a.gymId = gymId ?? null;
+    s.prefs.currentGymId = a.gymId;
+    if (!a.planId) return;
+    const items = planItems(a.planId, a.gymId);
+    a.entries = a.entries.map((e) => {
+      const item = e.planIndex != null && items[e.planIndex];
+      if (!item || e.sets.length || e.picked) return e;
+      const next = entryFor(item, e.planIndex);
+      return { ...next, target: e.target, skipped: e.skipped };
+    });
+  });
 }
 
 export function active() {
@@ -322,7 +381,12 @@ export function editSet(entryIndex, setIndex, patch) {
 export function swapExercise(entryIndex, exId) {
   update((s) => {
     const entry = s.active?.entries[entryIndex];
-    if (entry && exercise(exId)) entry.ex = exId;
+    if (entry && exercise(exId)) {
+      entry.ex = exId;
+      entry.picked = true;
+      delete entry.autoSwap;
+      delete entry.unavailable;
+    }
   });
 }
 
@@ -424,6 +488,13 @@ function requestPersistentStorage() {
 export function discardSession() {
   update((s) => {
     s.active = null;
+  });
+}
+
+export function updateSession(id, patch) {
+  update((s) => {
+    const x = s.sessions.find((y) => y.id === id);
+    if (x) Object.assign(x, patch);
   });
 }
 

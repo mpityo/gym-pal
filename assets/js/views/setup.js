@@ -1,4 +1,4 @@
-import { h, toast, download, fmtRel, fmtDate, pluralize } from '../util.js';
+import { h, modal, toast, download, fmtRel, fmtDate, pluralize } from '../util.js';
 import * as store from '../store.js';
 import * as ai from '../ai.js';
 import * as hr from '../hr.js';
@@ -185,15 +185,19 @@ function importButton(ctx) {
 
 // ── Gyms ─────────────────────────────────────────────────────────────────
 
+async function here() {
+  const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { enableHighAccuracy: true, timeout: 10000 }));
+  return { lat: +pos.coords.latitude.toFixed(5), lng: +pos.coords.longitude.toFixed(5) };
+}
+
 function gymsCard(st, ctx) {
-  const name = h('input', { class: 'input', placeholder: 'e.g. LA Fitness – Pinellas Park' });
+  const name = h('input', { class: 'input', placeholder: 'e.g. Planet Fitness – Main St' });
   const add = async (useGps) => {
     const n = name.value.trim() || 'My gym';
     let coords = {};
     if (useGps) {
       try {
-        const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { enableHighAccuracy: true, timeout: 10000 }));
-        coords = { lat: +pos.coords.latitude.toFixed(5), lng: +pos.coords.longitude.toFixed(5) };
+        coords = await here();
       } catch {
         toast('Could not get your location — saved without it.');
       }
@@ -204,9 +208,12 @@ function gymsCard(st, ctx) {
   };
   return h('section', { class: 'card' },
     h('h2', { class: 'card__title' }, 'Gyms'),
-    h('p', { class: 'muted small' }, 'Save your gym while you are standing in it, and each workout is tagged with where it happened automatically. Location is checked once when you start a workout, and stays on this phone.'),
+    h('p', { class: 'muted small' }, 'Save your gym while you are standing in it, and each workout is tagged with where it happened automatically. Location is checked once when you start a workout, and stays on this phone. With more than one gym, machine notes and "not at this gym" are kept per gym.'),
     st.gyms.length > 0 && h('ul', { class: 'plain' }, st.gyms.map((g) =>
-      h('li', { class: 'row' }, h('span', {}, `📍 ${g.name}`, g.lat == null && h('span', { class: 'muted small' }, ' (no location)')), h('button', { class: 'linkish small', type: 'button', onClick: () => { store.removeGym(g.id); ctx.rerender(); } }, 'Remove')),
+      h('li', { class: 'row' },
+        h('span', {}, `📍 ${g.name}`, g.chain && h('span', { class: 'muted small' }, ` · ${g.chain}`), g.lat == null && h('span', { class: 'muted small' }, ' (no location)')),
+        h('button', { class: 'linkish small', type: 'button', onClick: () => editGym(g.id, ctx) }, 'Edit'),
+      ),
     )),
     name,
     h('div', { class: 'row row--wrap' },
@@ -214,6 +221,78 @@ function gymsCard(st, ctx) {
       h('button', { class: 'btn btn--ghost', type: 'button', onClick: () => add(false) }, 'Save name only'),
     ),
   );
+}
+
+function editGym(id, ctx) {
+  const st = store.getState();
+  const g = store.gym(id);
+  if (!g) return;
+  const field = (label, value, placeholder, hint) => {
+    const input = h('input', { class: 'input', value: value ?? '', placeholder });
+    return [input, h('label', { class: 'field' }, h('span', {}, label), input, hint && h('span', { class: 'field__hint' }, hint))];
+  };
+  const [name, nameField] = field('Name', g.name, 'e.g. Planet Fitness – Main St');
+  const [chain, chainField] = field('Chain or brand (optional)', g.chain, 'e.g. Planet Fitness');
+  const [address, addressField] = field('Address (optional)', g.address, 'e.g. 123 Main St');
+  const loc = h('p', { class: 'muted small' }, g.lat != null ? `Location saved (${g.lat}, ${g.lng}).` : 'No location saved, so workouts here will ask which gym.');
+  const others = st.gyms.filter((x) => x.id !== id && Object.keys(st.gymNotes[x.id] ?? {}).length);
+  const from = others.length > 0 && h('select', { class: 'input' }, others.map((x) => h('option', { value: x.id }, x.name)));
+  const tagged = st.sessions.filter((x) => x.gymId === id).length;
+
+  const save = () => {
+    store.updateGym(id, { name: name.value.trim() || g.name, chain: chain.value.trim() || undefined, address: address.value.trim() || undefined });
+  };
+  const dialog = modal(
+    `Edit ${g.name}`,
+    h('div', { class: 'stack' },
+      nameField,
+      chainField,
+      addressField,
+      loc,
+      h('button', {
+        class: 'btn btn--ghost',
+        type: 'button',
+        onClick: async () => {
+          try {
+            store.updateGym(id, await here());
+            const n = store.gym(id);
+            loc.textContent = `Location updated (${n.lat}, ${n.lng}).`;
+            toast('Location updated');
+          } catch {
+            toast('Could not get your location.');
+          }
+        },
+      }, 'Update location to where I am now'),
+      from && h('h3', { class: 'eyebrow' }, 'Start from another gym’s notes'),
+      from && h('div', { class: 'row' }, from,
+        h('button', {
+          class: 'btn btn--ghost btn--small',
+          type: 'button',
+          onClick: () => {
+            store.copyGymNotes(from.value, id);
+            toast(`Copied notes from ${store.gym(from.value)?.name}. Notes already written here were kept.`);
+          },
+        }, 'Copy notes')),
+      h('div', { class: 'row row--wrap' },
+        h('button', { class: 'btn btn--primary', type: 'button', onClick: () => dialog.close() }, 'Save'),
+        h('button', {
+          class: 'btn btn--danger-ghost',
+          type: 'button',
+          onClick: () => {
+            const msg = `Remove ${g.name} and its machine notes?${tagged ? ` ${tagged} workout${tagged > 1 ? 's are' : ' is'} tagged with it and will keep their sets, but no gym name.` : ''}`;
+            if (!confirm(msg)) return;
+            store.removeGym(id);
+            toast(`Removed ${g.name}`);
+            dialog.close();
+          },
+        }, 'Remove gym'),
+      ),
+    ),
+  );
+  dialog.addEventListener('close', () => {
+    if (store.gym(id)) save();
+    ctx.rerender();
+  });
 }
 
 // ── Galaxy Watch ─────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 # Gym Pal
 
-A workout tracker for LA Fitness. It's a static site with no server, no accounts and no build step, hosted on GitHub Pages. You can install it to your phone's home screen and it works offline.
+A workout tracker for any gym with machines, cables and dumbbells. It's a static site with no server, no accounts and no build step, hosted on GitHub Pages. You can install it to your phone's home screen and it works offline.
 
 ## What it does
 
@@ -8,14 +8,22 @@ A workout tracker for LA Fitness. It's a static site with no server, no accounts
 | --- | --- |
 | **Today** | Shows the week at a glance and today's workout from the plan, with a suggested weight for every lift and where each machine is in your gym. Tap Start. |
 | **Workout** | Live during a session. Big +/− steppers for weight and reps, a rest timer that beeps and vibrates — even if you've switched to Machines or another tab — and a **Swap** button for when a machine is taken. It also has a how-to for every exercise, a plank stopwatch, treadmill time and distance, and live heart rate. |
-| **Machines** | 59 machines and exercises, each with what it looks like, how to set it up, form cues, common mistakes and good swaps. You can save notes on where each one is and your seat or pad settings. Each page also shows your history and strength trend for that exercise. |
+| **Machines** | 59 machines and exercises, each with what it looks like, how to set it up, form cues, common mistakes and good swaps. You can save notes on where each one is and your seat or pad settings, per gym, and mark one as not at your gym. Each page also shows your history and strength trend for that exercise. |
 | **Stats** | Total weight moved (with a real-world comparison), sets per muscle this week against the 10-set target, weekly volume, pushed/pulled/legs split, strength trends, personal records, machine usage, swaps, rest times, a training heatmap, mile-run pace, and Galaxy Watch heart-rate zones, calories, steps, sleep and daily low heart rate. |
 | **History** | Every workout with its sets, gym, duration and heart rate. |
-| **Setup** | Bodyweight and age, 4-day or 3-day plan, rest-timer and background-notification toggles, gyms, watch import, Bluetooth heart rate, Claude key, and backup/restore. |
+| **Setup** | Bodyweight and age, 4-day or 3-day plan, rest-timer and background-notification toggles, gyms (add, rename, re-locate, copy notes), watch import, Bluetooth heart rate, Claude key, and backup/restore. |
 
 ### The plan
 
-The 4-day upper/lower split runs Upper A on Monday, Lower A on Tuesday, Upper B on Thursday and Lower B on Friday. There's also a 3-day full-body option. Plans live in `assets/js/data/plans.js`. If a machine is always missing, swap it during a workout and tick **Always use the swap**, and the swap sticks for that plan.
+The 4-day upper/lower split runs Upper A on Monday, Lower A on Tuesday, Upper B on Thursday and Lower B on Friday. There's also a 3-day full-body option. Plans live in `assets/js/data/plans.js`. To always use a different exercise in a plan, swap it during a workout and tick **Always use the swap**. The swap then sticks for that plan at every gym. If one gym just doesn't have the machine, mark it **Not at this gym** instead (see Gyms below).
+
+### Gyms
+
+Save each gym you train at in **Setup → Gyms** (best done while standing in it, so it gets a location). When you start a workout, the app checks your location once. If it can't tell which gym you're at and you've saved two or more, it asks. You can change the gym from the workout header during a workout, or from a past workout in History.
+
+- **Notes are per gym.** "Where it is" and seat settings you write are saved for the gym you're at. Notes written before you had more than one gym are the default and show at every gym until you write a different one there.
+- **Not at this gym.** On a machine's page or its how-to sheet, tick **Not at {gym}**. Plans then use the first listed swap that gym does have, only at that gym. The Today preview tags it "not at this gym → swapped". If none of the swaps are there, it is tagged "not at this gym" so you can pick something else.
+- With two or more gyms, Today and Machines show a 📍 chip to switch which gym you're looking at, and Machines gets an **At my gym** filter.
 
 ### How weights are suggested
 
@@ -68,7 +76,7 @@ Everything is stored in the browser on your phone (localStorage, capped at rough
 
 ```sh
 python3 -m http.server 8000   # then open http://localhost:8000
-npm test                      # node --test: metrics, progression, Samsung parsing, zip, BLE parsing, store, today's plan, util, backup safety
+npm test                      # node --test: metrics, progression, Samsung parsing, zip, BLE parsing, gym notes and swaps, store, today's plan, util, backup safety
 ```
 
 A `Tests` check (`.github/workflows/test.yml`) runs `npm test` on every pull request. Every push to `main` also runs the tests and deploys to GitHub Pages (`.github/workflows/deploy-pages.yml`). For the first deploy, set **Settings → Pages → Source** to **GitHub Actions**.

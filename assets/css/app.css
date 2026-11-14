@@ -182,6 +182,11 @@ textarea.input { resize: vertical; }
 .chip--on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 .filter { display: flex; gap: 0.4rem; overflow-x: auto; padding-bottom: 0.2rem; scrollbar-width: none; }
 .tag { margin-left: 0.4rem; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-3); border: 1px solid var(--line); border-radius: 4px; padding: 0 0.3rem; }
+.tag--warn { color: var(--alert); border-color: color-mix(in srgb, var(--alert) 40%, transparent); }
+.gym-chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.eyebrow.linkish { display: block; color: var(--brand); }
+.pick.is-current { border-color: var(--brand); }
+.pick.is-missing .pick__name { color: var(--ink-2); }
 
 /* ── Stats grid ─────────────────────────────────────────────────────── */
 .stat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem; }
