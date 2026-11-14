@@ -200,7 +200,7 @@ function openSession(id, ctx, { editing = false, placeholders = [] } = {}) {
               'aria-label': `Edit set ${j + 1}`,
               onClick: () => openSetEditor({ title: `Set ${j + 1} · ${ex.name}`, ex, set, onSave: (patch) => { store.editSessionSet(s.id, ei, j, patch); redraw(); } }),
             },
-              h('span', { class: 'sets__n' }, `Set ${j + 1}`, set.pr?.length ? h('span', { class: 'tag tag--pr' }, 'PR') : null),
+              h('span', { class: 'sets__n' }, set.warmup ? 'Warm-up' : `Set ${j + 1 - e.sets.slice(0, j).filter((x) => x.warmup).length}`, set.pr?.length ? h('span', { class: 'tag tag--pr' }, 'PR') : null),
               h('span', { class: 'sets__v mono' }, setLabel(set, ex)),
               h('span', { class: 'sets__t muted small' }, set.at ? fmtClock(set.at) : ''),
             ),
@@ -367,5 +367,5 @@ function setText(s, ex) {
   if (ex.track === 'cardio') return [s.miles ? `${s.miles} mi` : null, s.minutes ? fmtMinutes(s.minutes) : null, s.miles && s.minutes ? `${fmtPace(s.minutes / s.miles)}/mi` : null].filter(Boolean).join(' ');
   if (ex.track === 'time') return `${s.secs}s`;
   if (ex.track === 'bodyweight' || ex.load === 'none') return `${s.reps}`;
-  return `${fmtW(s.w)}×${s.reps}`;
+  return `${s.warmup ? 'w' : ''}${fmtW(s.w)}×${s.reps}`;
 }

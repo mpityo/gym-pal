@@ -64,6 +64,7 @@ export function renderSetup(ctx) {
       toggle('Beep and vibrate when rest is up', 'restAlert', st),
       toggle('Start the rest timer when I log a set', 'autoRest', st),
       toggle('Keep the screen on during a workout', 'keepAwake', st),
+      toggle('Suggest warm-up sets on the first big lift', 'warmups', st),
       'Notification' in window && restNotifyToggle(st),
       Object.keys(st.swaps).some((k) => Object.keys(st.swaps[k]).length) &&
         h('button', { class: 'btn btn--ghost btn--small', type: 'button', onClick: () => { store.update((s) => { s.swaps = {}; }); toast('Plan swaps cleared'); ctx.rerender(); } }, 'Reset my permanent swaps'),

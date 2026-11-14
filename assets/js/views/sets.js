@@ -93,19 +93,23 @@ export function draftFrom(set, ex) {
  * you type (so a re-render does not lose it). Returns { node, read } where
  * read() is readSet(ex, d).
  */
-export function setFields(ex, d) {
+export function setFields(ex, d, { onChange } = {}) {
+  const set = (key) => (v) => {
+    d[key] = v;
+    onChange?.(key, v);
+  };
   let node;
   if (ex.track === 'cardio') {
     node = h('div', { class: 'logform__inputs' },
-      stepper('Time (m:ss)', d.minutes, 0.25, (v) => (d.minutes = v), { parse: parseClock, format: fmtMinutes, inputMode: 'text' }),
-      stepper('Miles', d.miles, 0.1, (v) => (d.miles = v), { decimals: true }),
+      stepper('Time (m:ss)', d.minutes, 0.25, set('minutes'), { parse: parseClock, format: fmtMinutes, inputMode: 'text' }),
+      stepper('Miles', d.miles, 0.1, set('miles'), { decimals: true }),
     );
   } else if (ex.track === 'time') {
-    node = h('div', { class: 'logform__inputs' }, stepper('Seconds', d.secs, 5, (v) => (d.secs = v)));
+    node = h('div', { class: 'logform__inputs' }, stepper('Seconds', d.secs, 5, set('secs')));
   } else {
     node = h('div', { class: 'logform__inputs' },
-      ex.track === 'weight' && stepper(weightLabel(ex), d.w, ex.step ?? 5, (v) => (d.w = v), { decimals: true }),
-      stepper('Reps', d.reps, 1, (v) => (d.reps = v)),
+      ex.track === 'weight' && stepper(weightLabel(ex), d.w, ex.step ?? 5, set('w'), { decimals: true }),
+      stepper('Reps', d.reps, 1, set('reps')),
     );
   }
   return { node, read: () => readSet(ex, d) };

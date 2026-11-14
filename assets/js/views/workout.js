@@ -5,7 +5,7 @@ import { exerciseOr } from '../data/exercises.js';
 import { PLAN_BY_ID } from '../data/plans.js';
 import {
   suggest, sessionSummary, newRecords, comparison, hrSummary, maxHr, fmtW, fmtLb, fmtDuration, fmtMinutes,
-  lastPerformance, compareSet, setRecords,
+  lastPerformance, compareSet, setRecords, work, warmupSets, needsWarmup, plateText, PLATES,
 } from '../metrics.js';
 import { crowdChips, targetText, openSwap, openHowTo, openExercisePicker, pickGym, gymName, exerciseThumb } from './common.js';
 import { zoneBar } from '../charts.js';
@@ -112,8 +112,9 @@ export function renderWorkout(ctx) {
   );
 }
 
+/** Done when the work sets reach the target; warm-ups never complete an exercise. */
 function done(entry) {
-  return entry.sets.length >= entry.target.sets;
+  return work(entry.sets).length >= entry.target.sets;
 }
 
 function closedEntry(entry, i) {
@@ -133,7 +134,7 @@ function summarizeSets(entry, ex) {
   if (ex.track === 'cardio') return entry.sets.map((s) => (s.miles ? `${s.miles} mi ${fmtMinutes(s.minutes)}` : `${fmtMinutes(s.minutes)}`)).join(', ');
   if (ex.track === 'time') return entry.sets.map((s) => `${s.secs}s`).join(' · ');
   if (ex.track === 'bodyweight' || ex.load === 'none') return entry.sets.map((s) => `${s.reps}`).join(' · ');
-  return entry.sets.map((s) => `${fmtW(s.w)}×${s.reps}`).join(' · ');
+  return entry.sets.map((s) => `${s.warmup ? 'w' : ''}${fmtW(s.w)}×${s.reps}`).join(' · ');
 }
 
 function openEntry(ctx, a, entry, i, st) {
@@ -210,19 +211,20 @@ function openEntry(ctx, a, entry, i, st) {
     ? h(
         'ol',
         { class: 'sets' },
-        entry.sets.map((s, j) =>
-          h(
+        entry.sets.map((s, j) => {
+          const k = workIndex(entry.sets, j);
+          return h(
             'li',
-            { class: 'sets__row' },
+            { class: `sets__row${s.warmup ? ' is-warmup' : ''}` },
             h('button', {
               class: 'sets__edit',
               type: 'button',
-              'aria-label': `Edit set ${j + 1}`,
-              onClick: () => openSetEditor({ title: `Set ${j + 1} · ${ex.name}`, ex, set: s, onSave: (patch) => { store.editSet(i, j, patch); toast('Set updated'); ctx.rerender(); } }),
+              'aria-label': `Edit ${s.warmup ? 'warm-up set' : `set ${k + 1}`}`,
+              onClick: () => openSetEditor({ title: `${s.warmup ? 'Warm-up' : `Set ${k + 1}`} · ${ex.name}`, ex, set: s, onSave: (patch) => { store.editSet(i, j, patch); toast('Set updated'); ctx.rerender(); } }),
             },
-              h('span', { class: 'sets__n' }, `Set ${j + 1}`, s.pr?.length ? h('span', { class: 'tag tag--pr', title: s.pr.join(', ') }, 'PR') : null),
+              h('span', { class: 'sets__n' }, s.warmup ? 'Warm-up' : `Set ${k + 1}`, s.pr?.length ? h('span', { class: 'tag tag--pr', title: s.pr.join(', ') }, 'PR') : null),
               h('span', { class: 'sets__v mono' }, setLabel(s, ex)),
-              h('span', { class: 'sets__t muted small' }, vsLast(s, prev?.sets[j], ex) ?? fmtClock(s.at)),
+              h('span', { class: 'sets__t muted small' }, (!s.warmup && vsLast(s, prev?.sets[k], ex)) || fmtClock(s.at)),
             ),
             h('button', {
               class: 'sets__x',
@@ -234,13 +236,14 @@ function openEntry(ctx, a, entry, i, st) {
                 if (removed) toast('Set deleted', { action: 'Undo', onAction: () => { store.insertSet(i, j, removed); ctx.rerender(); } });
               },
             }, '✕'),
-          ),
-        ),
+          );
+        }),
       )
     : null;
 
   const form = inputForm(ctx, a, entry, i, ex, sug, d, lastSet);
-  const strip = prev && ex.track !== 'cardio' ? lastTimeStrip(prev, entry.sets.length, ex, (set) => {
+  const warm = warmupRow(ctx, a, entry, i, ex, sug, st);
+  const strip = prev && ex.track !== 'cardio' ? lastTimeStrip(prev, work(entry.sets).length, ex, (set) => {
     if (ex.track === 'time') d.secs = set.secs;
     else {
       d.w = set.w ?? d.w;
@@ -248,7 +251,45 @@ function openEntry(ctx, a, entry, i, st) {
     }
     ctx.rerender();
   }) : null;
-  return h('div', { class: 'entry__body' }, head, guide, logged, strip, form, tools);
+  return h('div', { class: 'entry__body' }, head, guide, warm, logged, strip, form, tools);
+}
+
+/** Position of a set among the work sets (warm-ups are not numbered). */
+function workIndex(sets, j) {
+  return sets.slice(0, j).filter((x) => !x.warmup).length;
+}
+
+/**
+ * Warm-up chips for the first big push/pull/leg lift (spec 14): tap to log
+ * one as a warm-up set (short rest, never advances); tap a ticked one to
+ * remove it. Off with Setup → "Suggest warm-up sets".
+ */
+function warmupRow(ctx, a, entry, i, ex, sug, st) {
+  if (st.prefs.warmups === false || ex.track !== 'weight' || !sug?.w || !needsWarmup(a.entries, i)) return null;
+  const sets = warmupSets(sug.w, ex.step ?? 5);
+  if (!sets.length) return null;
+  return h(
+    'div',
+    { class: 'warmup' },
+    h('span', { class: 'muted small' }, 'Warm-up'),
+    h('div', { class: 'lasttime__pills' }, sets.map((w) => {
+      const j = entry.sets.findIndex((x) => x.warmup && Number(x.w) === w.w && Number(x.reps) === w.reps);
+      const ticked = j >= 0;
+      return h('button', {
+        class: `chip chip--btn mono${ticked ? ' chip--on' : ''}`,
+        type: 'button',
+        'aria-pressed': ticked,
+        onClick: () => {
+          if (ticked) store.removeSet(i, j);
+          else {
+            store.logSet(i, { w: w.w, reps: w.reps, warmup: true });
+            if (store.getState().prefs.autoRest) store.setRest(45);
+          }
+          ctx.rerender();
+        },
+      }, `${ticked ? '✓ ' : ''}${fmtW(w.w)} × ${w.reps}`);
+    })),
+  );
 }
 
 /** "Last time · Mon, Nov 9" and one pill per set; the upcoming set is highlighted; a tap copies it into the steppers. */
@@ -281,13 +322,13 @@ function vsLast(set, prevSet, ex) {
 }
 
 function inputForm(ctx, a, entry, i, ex, sug, d, lastSet) {
-  const n = entry.sets.length + 1;
+  const n = work(entry.sets).length + 1;
   const log = (set) => {
     const before = [...entry.sets];
     store.logSet(i, set);
     // A record beaten right now: say so at once, and tag the set.
     const st = store.getState();
-    const prs = setRecords(set, ex.id, st.sessions, before, st.profile.bodyweight);
+    const prs = setRecords(set, ex.id, st.sessions, work(before), st.profile.bodyweight);
     if (prs.length) {
       store.editSet(i, before.length, { pr: prs.map((p) => p.kind) });
       const p = prs.find((x) => x.kind !== 'Estimated 1-rep max') ?? prs[0];
@@ -295,7 +336,7 @@ function inputForm(ctx, a, entry, i, ex, sug, d, lastSet) {
       toast(`New record — ${p.kind.toLowerCase()}: ${p.value}${unit} (was ${p.was})`);
     }
     const e = store.active().entries[i];
-    const finishedEntry = e.sets.length >= e.target.sets;
+    const finishedEntry = work(e.sets).length >= e.target.sets;
     if (store.getState().prefs.autoRest && ex.track !== 'cardio' && e.target.rest) store.setRest(e.target.rest);
     if (finishedEntry) advance(store.active(), i);
     ctx.rerender();
@@ -353,13 +394,20 @@ function inputForm(ctx, a, entry, i, ex, sug, d, lastSet) {
     );
   }
 
-  d.w ??= lastSet?.w ?? sug?.w ?? '';
-  d.reps ??= lastSet?.reps ?? sug?.reps ?? entry.target.reps?.[1] ?? 10;
-  const fields = setFields(ex, d);
+  const lastWork = work(entry.sets).at(-1);
+  d.w ??= lastWork?.w ?? sug?.w ?? '';
+  d.reps ??= lastWork?.reps ?? sug?.reps ?? entry.target.reps?.[1] ?? 10;
+  const plates = ex.load === 'plates' ? h('button', { class: 'linkish small plates-line', type: 'button', onClick: () => openPlates(ctx) }) : null;
+  const drawPlates = () => {
+    if (plates) plates.textContent = plateText(d.w, store.getState().prefs.plates ?? PLATES) ?? 'Tap to choose which plates your gym has';
+  };
+  const fields = setFields(ex, d, { onChange: drawPlates });
+  drawPlates();
   return h(
     'div',
     { class: 'logform' },
     fields.node,
+    plates,
     h('button', {
       class: 'btn btn--primary btn--block btn--big',
       type: 'button',
@@ -436,4 +484,25 @@ function finish(ctx) {
     ),
   );
   ctx.go('history');
+}
+
+/** Tick which plate sizes the gym has (prefs.plates). */
+function openPlates(ctx) {
+  const have = new Set(store.getState().prefs.plates ?? PLATES);
+  modal('Plates at your gym', h('div', { class: 'stack' },
+    h('p', { class: 'muted small' }, 'The per-side breakdown only uses the sizes ticked here.'),
+    PLATES.map((p) => h('label', { class: 'check' },
+      h('input', {
+        type: 'checkbox',
+        checked: have.has(p),
+        onChange: (e) => {
+          if (e.target.checked) have.add(p);
+          else have.delete(p);
+          store.setPref('plates', PLATES.filter((x) => have.has(x)));
+          ctx.rerender();
+        },
+      }),
+      h('span', {}, `${fmtW(p)} lb`),
+    )),
+  ));
 }

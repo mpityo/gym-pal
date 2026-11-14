@@ -54,6 +54,10 @@ export const defaultState = () => ({
     /** Today's backup-reminder card is hidden until this time, if set. */
     backupSnoozeUntil: null,
     restNotify: false,
+    /** Spec 14: suggest warm-up sets on the first big lift of each kind. */
+    warmups: true,
+    /** Spec 14: plate sizes (lb) the gym has, for the per-side breakdown. */
+    plates: [45, 35, 25, 10, 5, 2.5],
   },
 });
 
