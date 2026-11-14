@@ -3,8 +3,9 @@ import * as store from '../store.js';
 import { PLAN_BY_ID, WEEK } from '../data/plans.js';
 import { getPlanFrom, allPlansFrom, weekSchedule } from '../routines.js';
 import { exerciseOr } from '../data/exercises.js';
-import { suggest, weekStart, dayKey, sessionSummary, muscleSets, addDays, fmtLb, fmtDuration, shouldShowBackupReminder, crowdGrid, crowdHint, plateText, estimateMinutes } from '../metrics.js';
+import { suggest, weekStart, dayKey, sessionSummary, muscleSets, addDays, fmtLb, fmtDuration, shouldShowBackupReminder, crowdGrid, crowdHint, plateText, estimateMinutes, shouldAskWeight, parseAmount } from '../metrics.js';
 import { targetText, pickGym, gymChip, exerciseThumb } from './common.js';
+import { stepper } from './sets.js';
 import { MUSCLES } from '../data/exercises.js';
 
 /** Which plan today is, and which plans this week are still undone. */
@@ -118,7 +119,7 @@ export async function start(planId, ctx, btn) {
 
 export function renderToday(ctx) {
   const st = store.getState();
-  const bw = st.profile.bodyweight;
+  const bw = store.bw();
   const plan = todayPlan(st);
   const p = getPlanFrom(st, plan.planId) ?? PLAN_BY_ID['upper-a'];
   const items = store.planItems(plan.planId);
@@ -249,6 +250,8 @@ export function renderToday(ctx) {
         low.length > 0 && h('p', { class: 'muted small' }, `Under 10 sets so far: ${low.join(', ')}. That is fine mid-week — see Stats for the full picture.`),
       ),
 
+    !a && shouldAskWeight(st.bodyweightLog, st.prefs, now) && weighCard(st, ctx),
+
     shouldShowBackupReminder(st, now) &&
       h(
         'section',
@@ -301,3 +304,29 @@ function stat(value, label) {
 
 
 export { stat };
+
+/** "Log today's weight": at most weekly, pre-filled with the last value, snoozable. */
+function weighCard(st, ctx) {
+  const last = st.bodyweightLog?.[st.bodyweightLog.length - 1]?.lb ?? st.profile.bodyweight ?? '';
+  const d = { w: last };
+  return h(
+    'section',
+    { class: 'card card--slim' },
+    h('div', { class: 'card__head' }, h('h2', { class: 'card__title' }, "Log today's weight"), h('span', { class: 'muted small' }, 'once a week is plenty')),
+    h('div', { class: 'row row--wrap weigh' },
+      stepper('Bodyweight lb', d.w, 0.5, (v) => (d.w = v), { decimals: true }),
+      h('button', {
+        class: 'btn btn--primary',
+        type: 'button',
+        onClick: () => {
+          const n = parseAmount(d.w);
+          if (n === null || n < 50 || n > 700) return toast('Enter your weight in pounds');
+          store.logBodyweight(n);
+          toast(`Logged ${n} lb`);
+          ctx.rerender();
+        },
+      }, 'Save'),
+      h('button', { class: 'btn btn--ghost', type: 'button', onClick: () => { store.setPref('weighSnoozeUntil', Date.now() + 7 * 86400000); ctx.rerender(); } }, 'Not now'),
+    ),
+  );
+}

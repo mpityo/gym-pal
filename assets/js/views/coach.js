@@ -2,7 +2,7 @@ import { h, modal } from '../util.js';
 import * as store from '../store.js';
 import * as ai from '../ai.js';
 import { allExercises, MUSCLES, exerciseOr } from '../data/exercises.js';
-import { suggest, exerciseRecords, muscleSets, weekStart, addDays, sessionSummary, dayKey, crowdGrid, quietTimes, busyTimes, fmtDayHour } from '../metrics.js';
+import { suggest, exerciseRecords, muscleSets, weekStart, addDays, sessionSummary, dayKey, crowdGrid, quietTimes, busyTimes, fmtDayHour, trendFacts } from '../metrics.js';
 import { targetText } from './common.js';
 import { todayPlan } from './today.js';
 
@@ -14,7 +14,7 @@ let lastError = null;
 
 function context(extra = {}) {
   const st = store.getState();
-  const bw = st.profile.bodyweight;
+  const bw = store.bw();
   const a = st.active;
   const wk = weekStart(Date.now());
   const ms = muscleSets(st.sessions, wk, addDays(wk, 7));
@@ -23,7 +23,8 @@ function context(extra = {}) {
   const gid = store.currentGym();
   const g = gid && store.gym(gid);
   return {
-    profile: { bodyweightLb: bw, age: st.profile.age },
+    profile: { bodyweightLb: st.profile.bodyweight, age: st.profile.age },
+    bodyweightTrend: trendFacts(st.bodyweightLog),
     gym: g ? { name: g.name, chain: g.chain || undefined, missingHere: store.missingAt(gid) } : null,
     gymBusyTimes: busyTimesFor(st.sessions, gid),
     plan: st.prefs.mode === '3day' ? '3-day full body' : '4-day upper/lower (Mon Upper A, Tue Lower A, Thu Upper B, Fri Lower B)',

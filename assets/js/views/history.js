@@ -9,7 +9,7 @@ import { setLabel, openSetEditor } from './sets.js';
 
 export function renderHistory(ctx) {
   const st = store.getState();
-  const bw = st.profile.bodyweight;
+  const bw = store.bw();
   if (!st.sessions.length) {
     return h('div', { class: 'page' }, h('div', { class: 'page__head' }, h('h1', {}, 'History')), empty('Nothing logged yet', 'Finished workouts appear here with every set, the gym, and heart rate if your watch was connected or imported.', logPastButton(ctx)));
   }
@@ -36,7 +36,7 @@ export function renderHistory(ctx) {
 }
 
 function sessionRow(s, st, ctx) {
-  const sum = sessionSummary(s, st.profile.bodyweight);
+  const sum = sessionSummary(s, store.bw());
   const wd = watchForSession(s, st.watch);
   const hs = wd.samples ? hrSummary(wd.samples, null) : null;
   const g = s.gymId && store.gym(s.gymId);
@@ -90,7 +90,7 @@ function openSession(id, ctx, { editing = false, placeholders = [] } = {}) {
 
   function readView(s) {
     const st = store.getState();
-    const bw = st.profile.bodyweight;
+    const bw = store.bw();
     const sum = sessionSummary(s, bw);
     const wd = watchForSession(s, st.watch);
     const hs = wd.samples ? hrSummary(wd.samples, maxHr(st.profile)) : null;

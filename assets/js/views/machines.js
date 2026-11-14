@@ -166,7 +166,7 @@ export function renderMachine(ctx) {
   const ex = exercise(ctx.param);
   if (!ex) return empty('Unknown exercise', null, h('button', { class: 'btn', type: 'button', onClick: () => ctx.go('machines') }, 'All machines'));
   const st = store.getState();
-  const bw = st.profile.bodyweight;
+  const bw = store.bw();
   const hist = exerciseHistory(st.sessions, ex.id, bw);
   const rec = exerciseRecords(st.sessions, ex.id, bw);
   const gid = store.currentGym();

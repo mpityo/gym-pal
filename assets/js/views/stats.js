@@ -1,4 +1,4 @@
-import { h, fmtDate, fmtRel } from '../util.js';
+import { h, fmtDate, fmtRel, modal, toast } from '../util.js';
 import * as store from '../store.js';
 import * as ai from '../ai.js';
 import { exerciseOr, MUSCLES, MUSCLE_ORDER } from '../data/exercises.js';
@@ -6,6 +6,7 @@ import {
   totals, comparison, weekly, weekStreak, muscleSets, weekStart, addDays, machineUsage, exerciseHistory, exerciseRecords,
   e1rm, calendar, runs, sessionSummary, hrSummary, maxHr, fmtLb, fmtDuration, fmtPace, fmtW, swapCounts, dayKey,
   crowdGrid, crowdScore, crowdLabel, crowdEstimated, quietTimes, busyTimes, fmtDayHour, fmtHour, CROWD_LABELS,
+  bodyweightTrend, sevenDayAverage, trendFacts,
 } from '../metrics.js';
 import { mapsLink } from '../gyms.js';
 import { watchForSession } from '../samsung.js';
@@ -16,7 +17,7 @@ let readCache = null;
 
 export function renderStats(ctx) {
   const st = store.getState();
-  const bw = st.profile.bodyweight;
+  const bw = store.bw();
   const sessions = st.sessions;
   if (!sessions.length) {
     return h('div', { class: 'page' }, h('div', { class: 'page__head' }, h('h1', {}, 'Stats')), empty('No workouts yet', 'Finish your first workout and this fills up: total weight moved, strength trends, weekly sets per muscle, machine usage, and your watch data.', h('button', { class: 'btn btn--primary', type: 'button', onClick: () => ctx.go('today') }, 'Start a workout')));
@@ -89,7 +90,7 @@ export function renderStats(ctx) {
         stat(all.reps.toLocaleString(), 'reps'),
         stat(`${streak} wk`, `streak (${target}+/wk)`),
       ),
-      !bw && h('p', { class: 'muted small' }, 'Add your bodyweight in Setup so push-ups and assisted moves count toward this.'),
+      !st.profile.bodyweight && h('p', { class: 'muted small' }, 'Add your bodyweight in Setup so push-ups and assisted moves count toward this.'),
     ),
 
     // Claude read
@@ -202,6 +203,8 @@ export function renderStats(ctx) {
 
     crowdCard(st, sessions),
 
+    bodyweightCard(st, ctx),
+
     // Cardio
     runList.length > 0 &&
       h(
@@ -284,6 +287,56 @@ function crowdCard(st, sessions) {
     h('p', { class: 'muted small' }, 'From your own ratings and "machine taken" swaps. Faded squares have no rating yet.'),
     gid && mapsAnchor(store.gym(gid)),
   );
+}
+
+// ── Bodyweight (spec 16) ─────────────────────────────────────────────────
+
+const dateOf = (key) => new Date(`${key}T12:00:00`).getTime();
+const signed = (n) => (n == null ? '–' : `${n > 0 ? '+' : n < 0 ? '−' : '±'}${Math.abs(n).toFixed(1)}`);
+
+function bodyweightCard(st, ctx) {
+  const log = st.bodyweightLog ?? [];
+  const t = bodyweightTrend(log);
+  if (!t) return null;
+  const since = Date.now() - 90 * 86400000;
+  const recent = log.filter((e) => dateOf(e.date) >= since);
+  const avg = sevenDayAverage(log);
+  return h('section', { class: 'card' },
+    h('div', { class: 'card__head' }, h('h2', { class: 'card__title' }, 'Bodyweight'), h('button', { class: 'linkish small', type: 'button', onClick: () => openWeights(ctx) }, 'See all')),
+    h('div', { class: 'stat-grid' },
+      stat(`${t.latestLb}`, 'lb latest'),
+      stat(signed(t.change30dLb), 'lb in 30 days'),
+      stat(signed(t.changeAllLb), `lb since ${fmtDate(dateOf(log[0].date), { month: 'short', day: 'numeric' })}`),
+    ),
+    recent.length > 1 && h('div', { class: 'trend' }, sparkline(recent.map((e) => e.lb), { width: 280, height: 56 })),
+    h('p', { class: 'muted small' }, `7-day average ${avg.toFixed(1)} lb${recent.length > 1 ? ' · last 90 days above' : ''}. Daily numbers bounce around; the average is the one to watch.`),
+  );
+}
+
+function openWeights(ctx) {
+  const list = h('ol', { class: 'plain weights' });
+  const draw = () => {
+    const log = store.getState().bodyweightLog ?? [];
+    list.replaceChildren(...[...log].reverse().map((e) =>
+      h('li', { class: 'row' },
+        h('span', { class: 'mono' }, `${e.lb} lb`),
+        h('span', { class: 'muted small' }, `${fmtDate(dateOf(e.date), { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}${e.source === 'watch' ? ' · watch' : ''}`),
+        h('button', {
+          class: 'sets__x',
+          type: 'button',
+          'aria-label': `Delete ${e.date}`,
+          onClick: () => {
+            const removed = store.removeBodyweight(e.date);
+            draw();
+            ctx.rerender();
+            if (removed) toast('Weigh-in deleted', { action: 'Undo', onAction: () => { store.logBodyweight(removed.lb, removed.date, removed.source); draw(); ctx.rerender(); } });
+          },
+        }, '✕'),
+      ),
+    ));
+  };
+  draw();
+  modal('Weight history', list);
 }
 
 function stat(value, label) {
@@ -395,7 +448,7 @@ function readKey(st) {
 }
 
 function facts(st, d) {
-  const bw = st.profile.bodyweight;
+  const bw = store.bw();
   const wk = weekStart(Date.now());
   const recent = st.sessions.filter((s) => s.startedAt >= addDays(wk, -7));
   return {
@@ -405,6 +458,7 @@ function facts(st, d) {
     thisWeekSetsPerMuscle: Object.fromEntries(Object.entries(d.thisWeek.sets).filter(([, v]) => v > 0).map(([k, v]) => [MUSCLES[k], v])),
     thisWeekDaysPerMuscle: Object.fromEntries(Object.entries(d.thisWeek.frequency).filter(([, v]) => v > 0).map(([k, v]) => [MUSCLES[k], v])),
     lastWeekSetsPerMuscle: Object.fromEntries(Object.entries(d.lastWeek.sets).filter(([, v]) => v > 0).map(([k, v]) => [MUSCLES[k], v])),
+    bodyweightTrend: trendFacts(st.bodyweightLog),
     weeklyPoundsLast4: d.weeks.slice(-4).map((w) => ({ week: dayKey(w.start), pounds: Math.round(w.tonnage), workouts: w.sessions })),
     strengthChangeSinceFirstSession: d.progress.slice(0, 8).map((p) => ({ exercise: p.ex.name, changePct: Math.round(p.change * 100), latestE1rm: Math.round(p.last) })),
     recentWorkouts: recent.map((s) => {

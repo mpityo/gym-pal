@@ -94,7 +94,16 @@ function strengthOf(set, ex, bodyweight) {
  */
 export const work = (sets) => (sets ?? []).filter((s) => !s.warmup);
 
-export function sessionSummary(session, bodyweight) {
+/**
+ * Bodyweight arguments accept a number or a resolver `(session) => lb`
+ * (spec 16: the weight that was true at the time of each workout).
+ */
+function bwFor(bodyweight, session) {
+  return typeof bodyweight === 'function' ? bodyweight(session) : bodyweight;
+}
+
+export function sessionSummary(session, bodyweightArg) {
+  const bodyweight = bwFor(bodyweightArg, session);
   const end = session.endedAt ?? Date.now();
   const durationMin = Math.max(0, (end - session.startedAt) / 60000);
   const byPattern = { push: 0, pull: 0, legs: 0, core: 0 };
@@ -149,10 +158,11 @@ export function sessionSummary(session, bodyweight) {
 
 // ── History per exercise ─────────────────────────────────────────────────
 
-export function exerciseHistory(sessions, exId, bodyweight) {
+export function exerciseHistory(sessions, exId, bodyweightArg) {
   const ex = exercise(exId);
   const out = [];
   for (const session of sessions) {
+    const bodyweight = bwFor(bodyweightArg, session);
     for (const entry of session.entries) {
       if (entry.ex !== exId) continue;
       // Strength comes from work sets only; warm-ups still count as weight moved.
@@ -250,7 +260,7 @@ export function setRecords(set, exId, earlierSessions, earlierSetsToday, bodywei
   const ex = exercise(exId);
   if (!ex || ex.track === 'cardio' || !set || set.warmup) return [];
   if (!exerciseHistory(earlierSessions, exId, bodyweight).length) return [];
-  const today = (sets) => ({ id: '_today', startedAt: Number.MAX_SAFE_INTEGER, entries: [{ ex: exId, sets }] });
+  const today = (sets) => ({ id: '_today', startedAt: Date.now(), entries: [{ ex: exId, sets }] });
   const before = exerciseRecords([...earlierSessions, today(earlierSetsToday ?? [])], exId, bodyweight);
   const now = exerciseRecords([...earlierSessions, today([...(earlierSetsToday ?? []), set])], exId, bodyweight);
   return recordsBeaten(ex, before, now);
@@ -575,9 +585,10 @@ export function comparison(lb) {
 
 // ── Machines ─────────────────────────────────────────────────────────────
 
-export function machineUsage(sessions, bodyweight) {
+export function machineUsage(sessions, bodyweightArg) {
   const map = new Map();
   for (const session of sessions) {
+    const bodyweight = bwFor(bodyweightArg, session);
     for (const entry of session.entries) {
       const ex = exercise(entry.ex);
       if (!ex || !entry.sets.length) continue;
@@ -953,4 +964,74 @@ export function estimateMinutes(items) {
     else secs += (Number(it.sets) || 0) * (45 + (it.rest ?? 90)) + 60;
   }
   return secs / 60;
+}
+
+// ── Bodyweight over time (spec 16) ───────────────────────────────────────
+
+/**
+ * The weight in force on the day of `ts`: the latest entry on or before
+ * that day; before the first entry, the earliest one; with an empty log,
+ * `fallback`. `log` is [{ date: 'YYYY-MM-DD', lb }] sorted by date.
+ */
+export function bodyweightAt(log, ts, fallback = null) {
+  if (!log?.length) return fallback;
+  const day = dayKey(ts);
+  let found = null;
+  for (const e of log) {
+    if (e.date <= day) found = e;
+    else break;
+  }
+  return (found ?? log[0]).lb;
+}
+
+/** A workout's own snapshot if it has one, else the log on its date. */
+export function sessionBodyweight(session, log, fallback = null) {
+  return session?.bodyweight ?? bodyweightAt(log, session?.startedAt ?? Date.now(), fallback);
+}
+
+/**
+ * Upsert one weigh-in (pure; returns a new sorted log). A manual entry
+ * beats a watch entry for the same date; a watch entry never replaces a
+ * manual one.
+ */
+export function upsertBodyweight(log, { date, lb, source = 'manual' }) {
+  const list = [...(log ?? [])];
+  const i = list.findIndex((e) => e.date === date);
+  if (i >= 0) {
+    if (source === 'watch' && list[i].source === 'manual') return list;
+    list[i] = { date, lb, source };
+  } else list.push({ date, lb, source });
+  return list.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+}
+
+/** Average of the entries in the 7 days up to and including the last one. */
+export function sevenDayAverage(log) {
+  if (!log?.length) return null;
+  const last = log[log.length - 1];
+  const from = dayKey(addDays(new Date(`${last.date}T12:00:00`).getTime(), -6));
+  const recent = log.filter((e) => e.date >= from && e.date <= last.date);
+  return recent.reduce((a, e) => a + e.lb, 0) / recent.length;
+}
+
+/** { latestLb, change30dLb, changeAllLb } or null with fewer than 2 entries. */
+export function bodyweightTrend(log, now = Date.now()) {
+  if (!log || log.length < 2) return null;
+  const last = log[log.length - 1];
+  const r1 = (x) => Math.round(x * 10) / 10;
+  const ago = bodyweightAt(log, addDays(now, -30), null);
+  return { latestLb: last.lb, change30dLb: ago == null ? null : r1(last.lb - ago), changeAllLb: r1(last.lb - log[0].lb) };
+}
+
+/** Today's "Log today's weight" card: no entry, or the last one over 7 days old — unless snoozed. */
+export function shouldAskWeight(log, prefs, now = Date.now()) {
+  if (prefs?.weighSnoozeUntil && now < prefs.weighSnoozeUntil) return false;
+  if (!log?.length) return true;
+  const last = new Date(`${log[log.length - 1].date}T12:00:00`).getTime();
+  return now - last > 7 * DAY;
+}
+
+/** { latestLb, change30dLb } for the coach and the weekly read, or undefined. */
+export function trendFacts(log, now = Date.now()) {
+  const t = bodyweightTrend(log, now);
+  return t ? { latestLb: t.latestLb, change30dLb: t.change30dLb } : undefined;
 }

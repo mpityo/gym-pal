@@ -17,7 +17,7 @@ let stopwatch = null; // { entry, startedAt }
 export function renderWorkout(ctx) {
   const a = store.active();
   const st = store.getState();
-  const bw = st.profile.bodyweight;
+  const bw = store.bw();
   const sum = sessionSummary(a, bw);
   const changeGym = async () => {
     const next = await pickGym({ title: 'Change gym', current: a.gymId, intro: 'Exercises you have not started are re-picked for that gym. Logged sets stay as they are.' });
@@ -140,7 +140,7 @@ function openEntry(ctx, a, entry, i, st) {
   rerenderSoon = () => ctx.rerender();
   const ex = exerciseOr(entry.ex);
   const earlier = st.sessions;
-  const sug = suggest(entry.ex, entry.target, earlier, st.profile.bodyweight);
+  const sug = suggest(entry.ex, entry.target, earlier, store.bw());
   const note = store.machineNote(entry.ex);
   const d = (draft[a.id + i] ??= {});
   const lastSet = entry.sets[entry.sets.length - 1];
@@ -327,7 +327,7 @@ function inputForm(ctx, a, entry, i, ex, sug, d, lastSet) {
     store.logSet(i, set);
     // A record beaten right now: say so at once, and tag the set.
     const st = store.getState();
-    const prs = setRecords(set, ex.id, st.sessions, work(before), st.profile.bodyweight);
+    const prs = setRecords(set, ex.id, st.sessions, work(before), store.bw());
     if (prs.length) {
       store.editSet(i, before.length, { pr: prs.map((p) => p.kind) });
       const p = prs.find((x) => x.kind !== 'Estimated 1-rep max') ?? prs[0];
@@ -451,7 +451,7 @@ function finish(ctx) {
   const st = store.getState();
   const earlier = [...st.sessions];
   const s = store.finishSession();
-  const bw = st.profile.bodyweight;
+  const bw = store.bw();
   const sum = sessionSummary(s, bw);
   const prs = newRecords(s, earlier, bw);
   const cmp = comparison(sum.tonnage);
