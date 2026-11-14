@@ -1,13 +1,17 @@
-import { h, modal, toast, matchScore, fmtRel, fmtDate } from '../util.js';
+import { h, modal, toast, matchScore, fmtRel, fmtDate, shrink } from '../util.js';
+import * as photos from '../photos.js';
 import * as store from '../store.js';
 import * as ai from '../ai.js';
-import { EXERCISES, MUSCLES, exercise } from '../data/exercises.js';
+import { allExercises, MUSCLES, exercise } from '../data/exercises.js';
 import { exerciseHistory, exerciseRecords, fmtW, fmtLb, e1rm, fmtMinutes, fmtPace } from '../metrics.js';
-import { muscleChips, usageMap, empty } from './common.js';
+import { muscleChips, usageMap, empty, gymChip, gymName, missingToggle, exerciseThumb, exerciseFigure, myPhotoBlock, photoGym } from './common.js';
 import { sparkline } from '../charts.js';
+import { openExerciseForm } from './custom.js';
+import { musclesFromText } from '../routines.js';
 
 const FILTERS = [
   ['all', 'All'],
+  ['here', 'At my gym'],
   ['used', 'Used'],
   ['push', 'Push'],
   ['pull', 'Pull'],
@@ -19,10 +23,16 @@ const view = { q: '', filter: 'all' };
 
 export function renderMachines(ctx) {
   const usage = usageMap();
+  const gid = store.currentGym();
+  if (view.filter === 'here' && !gid) view.filter = 'all';
+  const filters = FILTERS.filter(([id]) => id !== 'here' || gid);
   const list = h('div', { class: 'mlist' });
 
+  const keep = (e) =>
+    view.filter === 'all' ? true : view.filter === 'here' ? !store.isMissing(e.id, gid) : view.filter === 'used' ? usage.has(e.id) : e.pattern === view.filter;
+
   const draw = () => {
-    const rows = EXERCISES.filter((e) => (view.filter === 'all' ? true : view.filter === 'used' ? usage.has(e.id) : e.pattern === view.filter))
+    const rows = allExercises().filter(keep)
       .map((e) => [e, view.q ? matchScore(`${e.name} ${e.look} ${[...e.muscles.primary, ...e.muscles.secondary].map((m) => MUSCLES[m]).join(' ')}`, view.q) : 1])
       .filter(([, s]) => s > 0)
       .sort((a, b) => b[1] - a[1] || (view.filter === 'used' ? (usage.get(b[0].id)?.sets ?? 0) - (usage.get(a[0].id)?.sets ?? 0) : 0));
@@ -34,9 +44,9 @@ export function renderMachines(ctx) {
             return h(
               'button',
               { class: 'mrow', type: 'button', onClick: () => ctx.go(`machine/${e.id}`) },
-              h('span', { class: `mrow__pattern p-${e.pattern}`, 'aria-hidden': 'true' }),
+              exerciseThumb(e.id),
               h('span', { class: 'mrow__main' },
-                h('span', { class: 'mrow__name' }, e.name),
+                h('span', { class: 'mrow__name' }, e.name, e.custom && h('span', { class: 'tag' }, 'yours'), note.missing && h('span', { class: 'tag tag--warn' }, 'not at this gym')),
                 h('span', { class: 'mrow__meta' }, e.muscles.primary.map((m) => MUSCLES[m]).join(', ')),
                 note.where && h('span', { class: 'mrow__where' }, `📍 ${note.where}`),
               ),
@@ -50,7 +60,7 @@ export function renderMachines(ctx) {
   const chips = h(
     'div',
     { class: 'filter', role: 'tablist' },
-    FILTERS.map(([id, label]) =>
+    filters.map(([id, label]) =>
       h('button', {
         class: `chip chip--btn${view.filter === id ? ' chip--on' : ''}`,
         type: 'button',
@@ -67,7 +77,7 @@ export function renderMachines(ctx) {
   return h(
     'div',
     { class: 'page' },
-    h('div', { class: 'page__head' }, h('h1', {}, 'Machines'), h('p', { class: 'muted' }, 'How to find, set up and use each one, plus the swaps when it is taken.')),
+    h('div', { class: 'page__head' }, h('h1', {}, 'Machines'), h('p', { class: 'muted' }, 'How to find, set up and use each one, plus the swaps when it is taken.'), gymChip(ctx)),
     ai.hasKey() &&
       h('section', { class: 'card card--tip' },
         h('div', { class: 'card__head' }, h('div', {}, h('h2', { class: 'card__title' }, 'Not sure what a machine is?'), h('p', { class: 'muted small' }, 'Snap a photo and Claude will name it and tell you how to set it up.')),
@@ -76,11 +86,20 @@ export function renderMachines(ctx) {
     h('input', { class: 'input input--search', type: 'search', placeholder: 'Search machines or muscles', value: view.q, onInput: (e) => { view.q = e.target.value; draw(); } }),
     chips,
     list,
+    h('button', { class: 'btn btn--ghost btn--block', type: 'button', onClick: () => openExerciseForm({ onSaved: (saved) => ctx.go(`machine/${saved.id}`) }) }, '+ Add your own'),
+    h('p', { class: 'muted small center' }, 'A machine your gym has that is not listed? Add it, and it works everywhere: workouts, swaps, plans, history and stats.'),
   );
 }
 
 function photoButton(ctx) {
-  const file = h('input', { type: 'file', accept: 'image/*', capture: 'environment', hidden: true, onChange: (e) => identify(e.target.files[0], ctx) });
+  const file = h('input', {
+    type: 'file', accept: 'image/*', capture: 'environment', hidden: true,
+    onChange: (e) => {
+      const chosen = e.target.files[0];
+      e.target.value = '';
+      identify(chosen, ctx);
+    },
+  });
   return h('span', {}, file, h('button', { class: 'btn btn--primary', type: 'button', onClick: () => file.click() }, 'Photo'));
 }
 
@@ -90,7 +109,7 @@ async function identify(file, ctx) {
   modal('What is this?', body);
   try {
     const { base64, type } = await shrink(file);
-    const r = await ai.identifyMachine(base64, type, EXERCISES);
+    const r = await ai.identifyMachine(base64, type, allExercises());
     const ex = r.exerciseId !== 'none' ? exercise(r.exerciseId) : null;
     body.replaceChildren(
       h('h3', {}, r.name),
@@ -99,22 +118,46 @@ async function identify(file, ctx) {
       h('ol', { class: 'steps' }, r.setup.map((s) => h('li', {}, s))),
       h('h3', { class: 'eyebrow' }, 'Form'),
       h('ul', { class: 'steps' }, r.cues.map((s) => h('li', {}, s))),
+      ex && savePhotoButton(file, ex),
       ex && h('button', { class: 'btn btn--primary btn--block', type: 'button', onClick: () => { document.querySelector('dialog[open]')?.close(); ctx.go(`machine/${ex.id}`); } }, `Open ${ex.name}`),
-      !ex && h('p', { class: 'muted small' }, 'This one is not in the library, so it cannot be tracked by name yet. Log it under the closest match.'),
+      !ex && h('p', { class: 'muted small' }, 'This one is not in the library yet.'),
+      !ex && h('button', {
+        class: 'btn btn--primary btn--block',
+        type: 'button',
+        onClick: () => {
+          document.querySelector('dialog[open]')?.close();
+          openExerciseForm({
+            initial: { name: r.name, setup: r.setup, cues: r.cues, muscles: musclesFromText(r.muscles) },
+            onSaved: (saved) => ctx.go(`machine/${saved.id}`),
+          });
+        },
+      }, `Add "${r.name}" to my exercises`),
     );
   } catch (err) {
     body.replaceChildren(h('p', {}, err.message ?? 'That did not work.'));
   }
 }
 
-/** Downscale to ~1280px JPEG before sending: faster and cheaper, same answer. */
-async function shrink(file) {
-  const img = await createImageBitmap(file);
-  const scale = Math.min(1, 1280 / Math.max(img.width, img.height));
-  const canvas = Object.assign(document.createElement('canvas'), { width: Math.round(img.width * scale), height: Math.round(img.height * scale) });
-  canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-  const url = canvas.toDataURL('image/jpeg', 0.82);
-  return { base64: url.split(',')[1], type: 'image/jpeg' };
+/** Reuses the photo just taken for identify, so it does not need a second capture. */
+function savePhotoButton(file, ex) {
+  if (photos.isAvailable() === false) return null;
+  const btn = h('button', {
+    class: 'btn btn--block',
+    type: 'button',
+    onClick: async () => {
+      btn.disabled = true;
+      try {
+        const { blob, width, height } = await shrink(file, { max: 1024, quality: 0.8, as: 'blob' });
+        const ok = await photos.putPhoto(ex.id, photoGym(), blob, { width, height });
+        btn.textContent = ok ? `Saved to ${ex.name}` : 'Could not save the photo on this phone';
+        if (!ok) btn.disabled = false;
+      } catch (err) {
+        btn.textContent = err?.message ?? 'Could not read that photo.';
+        btn.disabled = false;
+      }
+    },
+  }, `Save this photo to ${ex.name}`);
+  return btn;
 }
 
 // ── One machine ──────────────────────────────────────────────────────────
@@ -126,12 +169,14 @@ export function renderMachine(ctx) {
   const bw = st.profile.bodyweight;
   const hist = exerciseHistory(st.sessions, ex.id, bw);
   const rec = exerciseRecords(st.sessions, ex.id, bw);
-  const note = store.machineNote(ex.id);
+  const gid = store.currentGym();
+  const note = store.machineNote(ex.id, gid);
   const totalSets = hist.reduce((a, x) => a + x.sets.length, 0);
   const totalLb = hist.reduce((a, x) => a + x.tonnage, 0);
 
-  const where = h('input', { class: 'input', value: note.where, placeholder: 'e.g. back wall, left of the mirrors', onChange: (e) => { store.setMachineNote(ex.id, { where: e.target.value.trim() }); toast('Saved'); } });
-  const settings = h('input', { class: 'input', value: note.settings, placeholder: 'e.g. seat 4, back pad 2', onChange: (e) => { store.setMachineNote(ex.id, { settings: e.target.value.trim() }); toast('Saved'); } });
+  const saved = gid ? `Saved for ${gymName(gid)}` : 'Saved';
+  const where = h('input', { class: 'input', value: note.where, placeholder: 'e.g. back wall, left of the mirrors', onChange: (e) => { store.setMachineNote(ex.id, { where: e.target.value.trim() }, gid); toast(saved); } });
+  const settings = h('input', { class: 'input', value: note.settings, placeholder: 'e.g. seat 4, back pad 2', onChange: (e) => { store.setMachineNote(ex.id, { settings: e.target.value.trim() }, gid); toast(saved); } });
 
   const trend =
     ex.track === 'weight' && ex.load !== 'assist'
@@ -144,7 +189,22 @@ export function renderMachine(ctx) {
     'div',
     { class: 'page' },
     h('button', { class: 'back', type: 'button', onClick: () => history.length > 1 ? history.back() : ctx.go('machines') }, '← Back'),
-    h('div', { class: 'page__head' }, h('p', { class: `eyebrow p-text-${ex.pattern}` }, ex.pattern), h('h1', {}, ex.name), muscleChips(ex)),
+    h('div', { class: 'page__head' }, h('p', { class: `eyebrow p-text-${ex.pattern}` }, ex.pattern, ex.custom ? ' · yours' : ''), h('h1', {}, ex.name), muscleChips(ex),
+      ex.custom && h('div', { class: 'row row--wrap' },
+        h('button', { class: 'btn btn--small', type: 'button', onClick: () => openExerciseForm({ id: ex.id, onSaved: () => ctx.rerender() }) }, 'Edit'),
+        h('button', {
+          class: 'btn btn--small btn--danger-ghost',
+          type: 'button',
+          onClick: () => {
+            if (!confirm(`Delete ${ex.name}?${hist.length ? ' It has history, so it will be hidden from lists and pickers but old workouts keep showing it.' : ''}`)) return;
+            const r = store.deleteCustomExercise(ex.id);
+            toast(r === 'hidden' ? `${ex.name} hidden` : `${ex.name} deleted`);
+            ctx.go('machines');
+          },
+        }, 'Delete'),
+      ),
+      ex.hidden && h('p', { class: 'muted small' }, 'Deleted: hidden from lists and pickers, kept for old workouts.'),
+    ),
 
     hist.length > 0 &&
       h(
@@ -175,10 +235,13 @@ export function renderMachine(ctx) {
     h(
       'section',
       { class: 'card' },
-      h('h2', { class: 'card__title' }, 'Finding it'),
+      h('div', { class: 'card__head' }, h('h2', { class: 'card__title' }, 'Finding it'), gymChip(ctx)),
+      myPhotoBlock(ex.id),
+      exerciseFigure(ex.id),
       h('p', {}, ex.look),
-      h('label', { class: 'field' }, h('span', {}, 'Where it is in your gym'), where),
+      h('label', { class: 'field' }, h('span', {}, gid ? `Where it is at ${gymName(gid)}` : 'Where it is in your gym'), where),
       h('label', { class: 'field' }, h('span', {}, 'Your settings (seat, pads, grip)'), settings),
+      missingToggle(ex.id, (on) => { toast(on ? `Marked not at ${gymName(gid)}. Plans will use a swap there.` : `Back at ${gymName(gid)}`); ctx.rerender(); }),
     ),
     h(
       'section',
@@ -196,10 +259,10 @@ export function renderMachine(ctx) {
         'section',
         { class: 'card' },
         h('h2', { class: 'card__title' }, 'If it is taken'),
-        h('div', { class: 'mlist' }, ex.alts.map(exercise).map((alt) =>
+        h('div', { class: 'mlist' }, ex.alts.map(exercise).filter(Boolean).map((alt) =>
           h('button', { class: 'mrow', type: 'button', onClick: () => ctx.go(`machine/${alt.id}`) },
             h('span', { class: `mrow__pattern p-${alt.pattern}`, 'aria-hidden': 'true' }),
-            h('span', { class: 'mrow__main' }, h('span', { class: 'mrow__name' }, alt.name), h('span', { class: 'mrow__meta' }, alt.look.split('.')[0])),
+            h('span', { class: 'mrow__main' }, h('span', { class: 'mrow__name' }, alt.name, store.isMissing(alt.id, gid) && h('span', { class: 'tag tag--warn' }, 'not at this gym')), h('span', { class: 'mrow__meta' }, alt.look.split('.')[0])),
           ),
         )),
       ),
