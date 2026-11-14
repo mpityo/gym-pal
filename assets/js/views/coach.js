@@ -1,7 +1,7 @@
 import { h, modal } from '../util.js';
 import * as store from '../store.js';
 import * as ai from '../ai.js';
-import { EXERCISES, MUSCLES, exercise } from '../data/exercises.js';
+import { EXERCISES, MUSCLES, exerciseOr } from '../data/exercises.js';
 import { PLAN_BY_ID } from '../data/plans.js';
 import { suggest, exerciseRecords, muscleSets, weekStart, addDays, sessionSummary, dayKey } from '../metrics.js';
 import { targetText } from './common.js';
@@ -19,23 +19,23 @@ function context(extra = {}) {
   const a = st.active;
   const wk = weekStart(Date.now());
   const ms = muscleSets(st.sessions, wk, addDays(wk, 7));
-  const about = extra.about ? exercise(extra.about) : null;
+  const about = extra.about ? exerciseOr(extra.about) : null;
   const tp = !a ? todayPlan(st) : null;
   return {
     profile: { bodyweightLb: bw, age: st.profile.age },
     plan: st.prefs.mode === '3day' ? '3-day full body' : '4-day upper/lower (Mon Upper A, Tue Lower A, Thu Upper B, Fri Lower B)',
-    askingAbout: about ? { id: about.id, name: about.name, setup: about.setup, cues: about.cues, alternatives: about.alts.map((x) => exercise(x).name), myNotes: store.machineNote(about.id), records: exerciseRecords(st.sessions, about.id, bw) } : undefined,
+    askingAbout: about ? { id: about.id, name: about.name, setup: about.setup, cues: about.cues, alternatives: about.alts.map((x) => exerciseOr(x).name), myNotes: store.machineNote(about.id), records: exerciseRecords(st.sessions, about.id, bw) } : undefined,
     workoutInProgress: a
       ? {
           plan: a.name,
           minutesIn: Math.round((Date.now() - a.startedAt) / 60000),
-          current: exercise(a.entries[a.current]?.ex)?.name,
+          current: a.entries[a.current] ? exerciseOr(a.entries[a.current].ex).name : undefined,
           exercises: a.entries.map((e) => ({
-            name: exercise(e.ex)?.name ?? e.ex,
-            target: targetText(e.target, exercise(e.ex)),
+            name: exerciseOr(e.ex).name,
+            target: targetText(e.target, exerciseOr(e.ex)),
             logged: e.sets,
             suggestion: suggest(e.ex, e.target, st.sessions, bw)?.reason,
-            swappedFrom: e.plannedEx !== e.ex ? exercise(e.plannedEx).name : undefined,
+            swappedFrom: e.plannedEx !== e.ex ? exerciseOr(e.plannedEx).name : undefined,
           })),
         }
       : null,
@@ -67,7 +67,7 @@ export function openCoach(ctx, extra = {}) {
     );
     log.scrollTop = log.scrollHeight;
   };
-  const input = h('textarea', { class: 'input', rows: 2, placeholder: extra.about ? `About ${exercise(extra.about).name}…` : 'Ask the coach…' });
+  const input = h('textarea', { class: 'input', rows: 2, placeholder: extra.about ? `About ${exerciseOr(extra.about).name}…` : 'Ask the coach…' });
   const send = h('button', { class: 'btn btn--primary', type: 'button' }, 'Send');
   const go = async () => {
     const text = input.value.trim();

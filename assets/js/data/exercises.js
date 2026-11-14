@@ -814,6 +814,27 @@ export function exercise(id) {
   return BY_ID[id] ?? null;
 }
 
+/** Never null: a placeholder keeps old sessions readable if an id disappears from the library. */
+export function exerciseOr(id) {
+  return (
+    BY_ID[id] ?? {
+      id,
+      name: `Unknown exercise (${id})`,
+      unknown: true,
+      pattern: 'other',
+      track: 'weight',
+      load: 'stack',
+      step: 5,
+      muscles: { primary: [], secondary: [] },
+      look: '',
+      setup: [],
+      cues: [],
+      mistakes: [],
+      alts: [],
+    }
+  );
+}
+
 /** Samsung Health exercise_type codes (developer.samsung.com, Predefined Exercise Type). */
 export const SAMSUNG_TYPES = {
   0: 'Custom workout',

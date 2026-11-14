@@ -1,7 +1,7 @@
 import { h, toast, fmtRel, download } from '../util.js';
 import * as store from '../store.js';
 import { PLANS, PLAN_BY_ID, WEEK } from '../data/plans.js';
-import { exercise } from '../data/exercises.js';
+import { exerciseOr } from '../data/exercises.js';
 import { suggest, weekStart, dayKey, sessionSummary, muscleSets, addDays, fmtLb, fmtDuration, shouldShowBackupReminder } from '../metrics.js';
 import { targetText } from './common.js';
 import { MUSCLES } from '../data/exercises.js';
@@ -10,16 +10,22 @@ import { MUSCLES } from '../data/exercises.js';
 export function todayPlan(state, now = Date.now()) {
   const sessions = state.sessions;
   const week = weekStart(now);
-  const doneThisWeek = new Set(sessions.filter((s) => s.startedAt >= week).map((s) => s.planId));
+  const sessionsThisWeek = sessions.filter((s) => s.startedAt >= week);
+  const doneThisWeek = new Set(sessionsThisWeek.map((s) => s.planId));
   const today = new Date(now).getDay();
   const doneToday = sessions.some((s) => dayKey(s.startedAt) === dayKey(now));
 
   if (state.prefs.mode === '3day') {
     const last = [...sessions].reverse().find((s) => s.planId === 'full-a' || s.planId === 'full-b');
     const next = last?.planId === 'full-a' ? 'full-b' : 'full-a';
-    const thisWeek = sessions.filter((s) => s.startedAt >= week && PLAN_BY_ID[s.planId]?.threeDay).length;
+    const weekTarget = 3;
+    // Repeats of a full-body plan still count, up to the weekly target; anything
+    // past that (and any Freestyle session) is "extra", shown separately.
+    const threeDayCount = sessionsThisWeek.filter((s) => PLAN_BY_ID[s.planId]?.threeDay).length;
+    const weekDone = Math.min(threeDayCount, weekTarget);
+    const extra = sessionsThisWeek.length - weekDone;
     const isDay = [1, 3, 5].includes(today);
-    return { planId: next, rest: !isDay, doneToday, missed: [], weekDone: thisWeek, weekTarget: 3, label: isDay ? 'Today' : 'Next' };
+    return { planId: next, rest: !isDay, doneToday, missed: [], weekDone, weekTarget, extra, label: isDay ? 'Today' : 'Next' };
   }
 
   const entry = WEEK.find((d) => d.day === today);
@@ -27,11 +33,16 @@ export function todayPlan(state, now = Date.now()) {
   const todayIdx = (today + 6) % 7; // Monday = 0
   const missed = ordered.filter((d) => (d.day + 6) % 7 < todayIdx && !doneThisWeek.has(d.plan)).map((d) => d.plan);
   const upcoming = ordered.find((d) => (d.day + 6) % 7 > todayIdx && !doneThisWeek.has(d.plan))?.plan ?? 'upper-a';
-  const weekDone = sessions.filter((s) => s.startedAt >= week && !PLAN_BY_ID[s.planId]?.threeDay).length;
+  const weekTarget = 4;
+  // Count distinct planned workouts done this week, not every session: a
+  // Freestyle session (planId null) or a repeat of the same plan should not
+  // inflate the count or falsely mark the week complete.
+  const weekDone = new Set(sessionsThisWeek.map((s) => s.planId).filter((id) => id && WEEK.some((d) => d.plan === id))).size;
+  const extra = sessionsThisWeek.length - weekDone;
   if (entry?.plan) {
-    return { planId: entry.plan, rest: false, doneToday: doneToday || doneThisWeek.has(entry.plan), missed, weekDone, weekTarget: 4, label: 'Today' };
+    return { planId: entry.plan, rest: false, doneToday: doneToday || doneThisWeek.has(entry.plan), missed, weekDone, weekTarget, extra, label: 'Today' };
   }
-  return { planId: missed[0] ?? upcoming, rest: true, restNote: entry?.note, doneToday, missed, weekDone, weekTarget: 4, label: missed.length ? 'Catch up' : 'Next' };
+  return { planId: missed[0] ?? upcoming, rest: true, restNote: entry?.note, doneToday, missed, weekDone, weekTarget, extra, label: missed.length ? 'Catch up' : 'Next' };
 }
 
 async function locate() {
@@ -48,16 +59,40 @@ async function locate() {
   }
 }
 
-export async function start(planId, ctx) {
+let starting = false;
+
+/** `btn` is the tapped button, if any: disabled and relabelled while locating. */
+export async function start(planId, ctx, btn) {
   if (store.active()) {
     ctx.go('workout');
     return;
   }
-  const where = await locate();
-  store.startSession(planId, where);
-  const g = where.gymId && store.gym(where.gymId);
-  toast(g ? `Started at ${g.name}` : 'Workout started');
-  ctx.go('workout');
+  if (starting) return; // a tap is already in flight — ignore the extra tap
+  starting = true;
+  let prevLabel;
+  if (btn) {
+    prevLabel = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Finding your gym…';
+  }
+  try {
+    const where = await locate();
+    if (store.active()) {
+      // A session appeared while we were locating (e.g. resumed elsewhere).
+      ctx.go('workout');
+      return;
+    }
+    store.startSession(planId, where);
+    const g = where.gymId && store.gym(where.gymId);
+    toast(g ? `Started at ${g.name}` : 'Workout started');
+    ctx.go('workout');
+  } finally {
+    starting = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = prevLabel;
+    }
+  }
 }
 
 export function renderToday(ctx) {
@@ -99,7 +134,7 @@ export function renderToday(ctx) {
     'ol',
     { class: 'preview' },
     items.map((item) => {
-      const ex = exercise(item.ex);
+      const ex = exerciseOr(item.ex);
       const sug = suggest(item.ex, { sets: item.sets, reps: item.reps, secs: item.secs, miles: item.miles, minutes: item.minutes }, st.sessions, bw);
       const note = store.machineNote(item.ex);
       return h(
@@ -129,7 +164,7 @@ export function renderToday(ctx) {
         h('div', { class: 'card__head' }, h('h2', { class: 'card__title' }, `${a.name} in progress`), h('span', { class: 'mono', 'data-elapsed': a.startedAt })),
         h('button', { class: 'btn btn--primary btn--block', type: 'button', onClick: () => ctx.go('workout') }, 'Resume workout'),
       ),
-    h('section', { class: 'card' }, h('div', { class: 'card__head' }, h('h2', { class: 'card__title' }, 'This week'), h('span', { class: 'muted mono' }, `${plan.weekDone}/${plan.weekTarget} workouts`)), strip),
+    h('section', { class: 'card' }, h('div', { class: 'card__head' }, h('h2', { class: 'card__title' }, 'This week'), h('span', { class: 'muted mono' }, `${plan.weekDone}/${plan.weekTarget} workouts${plan.extra ? ` · +${plan.extra} extra` : ''}`)), strip),
 
     !a &&
       h(
@@ -139,11 +174,11 @@ export function renderToday(ctx) {
           'div',
           { class: 'card__head' },
           h('div', {}, h('p', { class: 'eyebrow' }, plan.rest ? `Rest day · ${plan.label}` : plan.doneToday ? 'Done for today · next time' : plan.label), h('h2', { class: 'plan-title' }, p.name)),
-          h('span', { class: 'muted small' }, `${items.filter((i) => exercise(i.ex).track !== 'cardio').length} lifts · ~${Math.round(estimateMinutes(items))} min`),
+          h('span', { class: 'muted small' }, `${items.filter((i) => exerciseOr(i.ex).track !== 'cardio').length} lifts · ~${Math.round(estimateMinutes(items))} min`),
         ),
         plan.rest && plan.restNote && h('p', { class: 'muted' }, plan.weekDone >= plan.weekTarget ? `All ${plan.weekTarget} done this week. ${plan.restNote} — ${p.name} is up next.` : `${plan.restNote}. ${plan.missed.length === 1 ? `${PLAN_BY_ID[plan.missed[0]].name} got skipped this week — want to catch up?` : plan.missed.length > 1 ? `${plan.missed.length} workouts are still open this week. Catch up with the first one, or just pick up the plan on Monday.` : 'Or start the next workout early.'}`),
         preview,
-        h('button', { class: 'btn btn--primary btn--block btn--big', type: 'button', onClick: () => start(plan.planId, ctx) }, `Start ${p.name}`),
+        h('button', { class: 'btn btn--primary btn--block btn--big', type: 'button', onClick: (e) => start(plan.planId, ctx, e.currentTarget) }, `Start ${p.name}`),
       ),
 
     !a &&
@@ -158,12 +193,12 @@ export function renderToday(ctx) {
             const last = [...st.sessions].reverse().find((s) => s.planId === x.id);
             return h(
               'button',
-              { class: `choice tint-${x.tint}`, type: 'button', onClick: () => start(x.id, ctx) },
+              { class: `choice tint-${x.tint}`, type: 'button', onClick: (e) => start(x.id, ctx, e.currentTarget) },
               h('strong', {}, x.name),
               h('span', { class: 'muted small' }, last ? `Last: ${fmtRel(last.startedAt)}` : 'Not done yet'),
             );
           }),
-          h('button', { class: 'choice', type: 'button', onClick: () => start(null, ctx) }, h('strong', {}, 'Freestyle'), h('span', { class: 'muted small' }, 'Add exercises as you go')),
+          h('button', { class: 'choice', type: 'button', onClick: (e) => start(null, ctx, e.currentTarget) }, h('strong', {}, 'Freestyle'), h('span', { class: 'muted small' }, 'Add exercises as you go')),
         ),
       ),
 
@@ -235,7 +270,7 @@ function stat(value, label) {
 function estimateMinutes(items) {
   let secs = 0;
   for (const it of items) {
-    const ex = exercise(it.ex);
+    const ex = exerciseOr(it.ex);
     if (ex.track === 'cardio') secs += (it.minutes ?? (it.miles ? it.miles * 10 : 5)) * 60;
     else secs += it.sets * (45 + (it.rest ?? 90)) + 60;
   }
