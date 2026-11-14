@@ -320,7 +320,7 @@ function weeklyReadCard(st, d) {
     }
   }
   function show(v) {
-    out.replaceChildren(h('p', { class: 'read__headline' }, v.headline), h('ul', { class: 'steps' }, v.points.map((p) => h('li', {}, p))), h('p', { class: 'read__next' }, h('strong', {}, 'Next: '), v.next));
+    out.replaceChildren(h('p', { class: 'read__headline' }, v.headline), h('ul', { class: 'steps' }, (v.points ?? []).map((p) => h('li', {}, p))), h('p', { class: 'read__next' }, h('strong', {}, 'Next: '), v.next));
   }
   return h('section', { class: 'card card--read' }, h('div', { class: 'card__head' }, h('h2', { class: 'card__title' }, 'Coach’s read'), btn), out);
 }

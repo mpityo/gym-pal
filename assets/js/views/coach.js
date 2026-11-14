@@ -5,10 +5,13 @@ import { EXERCISES, MUSCLES, exercise } from '../data/exercises.js';
 import { PLAN_BY_ID } from '../data/plans.js';
 import { suggest, exerciseRecords, muscleSets, weekStart, addDays, sessionSummary, dayKey } from '../metrics.js';
 import { targetText } from './common.js';
+import { todayPlan } from './today.js';
 
 /** Conversation survives closing the sheet, cleared when a workout ends. */
 let history = [];
 let historyFor = null;
+/** The message from the last failed send, cleared at the start of the next one. */
+let lastError = null;
 
 function context(extra = {}) {
   const st = store.getState();
@@ -17,6 +20,7 @@ function context(extra = {}) {
   const wk = weekStart(Date.now());
   const ms = muscleSets(st.sessions, wk, addDays(wk, 7));
   const about = extra.about ? exercise(extra.about) : null;
+  const tp = !a ? todayPlan(st) : null;
   return {
     profile: { bodyweightLb: bw, age: st.profile.age },
     plan: st.prefs.mode === '3day' ? '3-day full body' : '4-day upper/lower (Mon Upper A, Tue Lower A, Thu Upper B, Fri Lower B)',
@@ -27,7 +31,7 @@ function context(extra = {}) {
           minutesIn: Math.round((Date.now() - a.startedAt) / 60000),
           current: exercise(a.entries[a.current]?.ex)?.name,
           exercises: a.entries.map((e) => ({
-            name: exercise(e.ex).name,
+            name: exercise(e.ex)?.name ?? e.ex,
             target: targetText(e.target, exercise(e.ex)),
             logged: e.sets,
             suggestion: suggest(e.ex, e.target, st.sessions, bw)?.reason,
@@ -35,7 +39,7 @@ function context(extra = {}) {
           })),
         }
       : null,
-    nextPlanned: !a ? PLAN_BY_ID[st.prefs.mode === '3day' ? 'full-a' : 'upper-a']?.name : undefined,
+    nextPlanned: tp ? { name: PLAN_BY_ID[tp.planId].name, when: tp.label, restDay: tp.rest, doneThisWeek: tp.weekDone, weeklyTarget: tp.weekTarget } : undefined,
     thisWeekSetsPerMuscle: Object.fromEntries(Object.entries(ms.sets).filter(([, v]) => v > 0).map(([k, v]) => [MUSCLES[k], v])),
     recentWorkouts: st.sessions.slice(-6).map((s) => ({ date: dayKey(s.startedAt), plan: s.name, ...pick(sessionSummary(s, bw)), notes: s.notes || undefined })),
     library: EXERCISES.map((e) => ({ id: e.id, name: e.name, primary: e.muscles.primary, alts: e.alts })),
@@ -51,6 +55,7 @@ export function openCoach(ctx, extra = {}) {
   if (historyFor !== key) {
     history = [];
     historyFor = key;
+    lastError = null;
   }
   const log = h('div', { class: 'chat' });
   const draw = () => {
@@ -58,6 +63,7 @@ export function openCoach(ctx, extra = {}) {
       ...(history.length
         ? history.map((m) => h('div', { class: `chat__msg chat__msg--${m.role}` }, m.content))
         : [h('p', { class: 'muted small' }, 'Ask anything: "leg press is taken, what now?", "is my seat right if I feel it in my shoulders?", "how heavy should I go on lat pulldown?"')]),
+      ...(lastError ? [h('p', { class: 'chat__error', role: 'alert' }, lastError)] : []),
     );
     log.scrollTop = log.scrollHeight;
   };
@@ -66,6 +72,7 @@ export function openCoach(ctx, extra = {}) {
   const go = async () => {
     const text = input.value.trim();
     if (!text) return;
+    lastError = null;
     input.value = '';
     history.push({ role: 'user', content: text });
     draw();
@@ -78,7 +85,7 @@ export function openCoach(ctx, extra = {}) {
     } catch (err) {
       history.pop();
       input.value = text;
-      log.append(h('p', { class: 'muted small' }, err.message));
+      lastError = err.message;
     } finally {
       send.disabled = false;
       draw();
