@@ -13,7 +13,7 @@ import { PLAN_BY_ID } from './data/plans.js';
 import { exercise, registerCustom } from './data/exercises.js';
 import { getPlanFrom, allPlansFrom, cleanItem, isBuiltInPlan, defaultPlanItem } from './routines.js';
 import * as G from './gyms.js';
-import { adjustRest as adjustRestPure } from './metrics.js';
+import { adjustRest as adjustRestPure, dayKey, upsertBodyweight, sessionBodyweight } from './metrics.js';
 
 const KEY = 'gym-pal.v1';
 const listeners = new Set();
@@ -36,6 +36,8 @@ export const defaultState = () => ({
   machineNotes: {},
   /** gymId -> exercise id -> { where?, settings?, missing? } — what is true at that gym; wins over machineNotes */
   gymNotes: {},
+  /** Spec 16: [{ date: 'YYYY-MM-DD', lb, source: 'manual' | 'watch' }], sorted by date, one per date */
+  bodyweightLog: [],
   /** Spec 15: your own exercises, same shape as library entries, ids 'c-…', plus { custom: true, hidden? } */
   customExercises: [],
   /** Spec 15: planId -> { id, name, tint, items } — edited built-ins and plans you made ('p-…') */
@@ -61,6 +63,8 @@ export const defaultState = () => ({
     /** Today's backup-reminder card is hidden until this time, if set. */
     backupSnoozeUntil: null,
     restNotify: false,
+    /** Spec 16: Today's "Log today's weight" card is hidden until this time, if set. */
+    weighSnoozeUntil: null,
     /** Spec 14: suggest warm-up sets on the first big lift of each kind. */
     warmups: true,
     /** Spec 14: plate sizes (lb) the gym has, for the per-side breakdown. */
@@ -75,10 +79,23 @@ function load() {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return defaultState();
-    return merge(defaultState(), JSON.parse(raw));
+    return migrate(merge(defaultState(), JSON.parse(raw)));
   } catch {
     return defaultState();
   }
+}
+
+/**
+ * Spec 16: a save from before the bodyweight log has one number in Setup.
+ * Seed the log with it, dated at the first workout (or today), so past
+ * workouts keep using it.
+ */
+export function migrate(st) {
+  if ((!st.bodyweightLog || !st.bodyweightLog.length) && Number(st.profile?.bodyweight) > 0) {
+    const first = st.sessions?.length ? Math.min(...st.sessions.map((x) => x.startedAt).filter(Number.isFinite)) : Date.now();
+    st.bodyweightLog = [{ date: dayKey(Number.isFinite(first) ? first : Date.now()), lb: Number(st.profile.bodyweight), source: 'manual' }];
+  }
+  return st;
 }
 
 /** Shallow-merge nested objects so new default keys appear after an update. */
@@ -166,7 +183,7 @@ export function getState() {
 }
 
 export function replaceState(next) {
-  state = merge(defaultState(), next);
+  state = migrate(merge(defaultState(), next));
   commit();
 }
 
@@ -318,6 +335,8 @@ export function startSession(planId, { gymId = null, geo = null } = {}) {
       id: uid(),
       planId,
       name: getPlanFrom(state, planId)?.name ?? 'Freestyle',
+      // Spec 16: the weight that is true today, so changing it later never rewrites this workout.
+      bodyweight: state.profile.bodyweight ?? null,
       startedAt: now,
       endedAt: null,
       gymId,
@@ -943,4 +962,39 @@ export function setScheduleDay(day, planId, startFrom) {
     s.schedule ??= { ...(startFrom ?? {}) };
     s.schedule[day] = planId || null;
   });
+}
+
+// ── Bodyweight over time (spec 16) ───────────────────────────────────────
+
+/**
+ * Log a weigh-in for a date (default today). Manual beats watch on the same
+ * date. profile.bodyweight follows the latest *date* in the log, so existing
+ * readers keep working.
+ */
+export function logBodyweight(lb, date = dayKey(Date.now()), source = 'manual') {
+  const n = Math.round(Number(lb) * 10) / 10;
+  if (!(n > 0)) return;
+  update((s) => {
+    s.bodyweightLog = upsertBodyweight(s.bodyweightLog, { date, lb: n, source });
+    s.profile.bodyweight = s.bodyweightLog[s.bodyweightLog.length - 1].lb;
+  });
+}
+
+/** Returns the removed entry (for Undo), or null. */
+export function removeBodyweight(date) {
+  let removed = null;
+  update((s) => {
+    const i = (s.bodyweightLog ?? []).findIndex((e) => e.date === date);
+    if (i < 0) return;
+    [removed] = s.bodyweightLog.splice(i, 1);
+    s.profile.bodyweight = s.bodyweightLog.length ? s.bodyweightLog[s.bodyweightLog.length - 1].lb : null;
+  });
+  return removed;
+}
+
+/** For the metrics: (session) => the bodyweight that was true for that workout. */
+export function bw() {
+  const log = state.bodyweightLog;
+  const fallback = state.profile.bodyweight;
+  return (session) => sessionBodyweight(session, log, fallback);
 }

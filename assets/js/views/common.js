@@ -26,7 +26,7 @@ export function targetText(target, ex) {
 
 export function usageMap() {
   const st = store.getState();
-  return new Map(machineUsage(st.sessions, st.profile.bodyweight).map((u) => [u.ex, u]));
+  return new Map(machineUsage(st.sessions, store.bw()).map((u) => [u.ex, u]));
 }
 
 // ── Gyms ─────────────────────────────────────────────────────────────────

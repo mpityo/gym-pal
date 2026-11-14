@@ -35,7 +35,9 @@ export function renderSetup(ctx) {
               e.target.value = p[key] ?? '';
               return;
             }
-            store.setProfile({ [key]: n });
+            // Spec 16: bodyweight is a log; this is today's entry.
+            if (key === 'bodyweight') store.logBodyweight(n);
+            else store.setProfile({ [key]: n });
             ctx.rerender();
           },
         }),
@@ -51,7 +53,7 @@ export function renderSetup(ctx) {
 
     h('section', { class: 'card' },
       h('h2', { class: 'card__title' }, 'You'),
-      num('Bodyweight', 'bodyweight', 'lb', 'Counts push-ups and assisted pull-ups/dips toward pounds moved.'),
+      num('Bodyweight', 'bodyweight', 'lb', `Counts push-ups and assisted pull-ups/dips toward pounds moved, using what you weighed at the time of each workout.${st.bodyweightLog?.length ? ` Last logged ${fmtDate(new Date(`${st.bodyweightLog[st.bodyweightLog.length - 1].date}T12:00:00`).getTime(), { month: 'short', day: 'numeric' })}.` : ''}`),
       num('Age', 'age', 'years', maxHr(p) && !p.maxHr ? `Estimated max heart rate: ${maxHr(p)} bpm (208 − 0.7 × age, Tanaka 2001).` : 'Used to estimate max heart rate for zones.'),
       num('Max heart rate (optional)', 'maxHr', 'bpm', 'If you know yours from a test, it beats the estimate.'),
     ),
@@ -144,6 +146,26 @@ function photosCheckbox() {
 
 function fmtSize(bytes) {
   return bytes < 100_000 ? `${Math.max(1, Math.round(bytes / 1000))} KB` : `${(bytes / 1e6).toFixed(1)} MB`;
+}
+
+/** After a Samsung import: add its weigh-ins to the bodyweight log (never over a manual entry). */
+function offerWatchWeights(watch) {
+  const weighIns = Object.entries(watch?.days ?? {}).filter(([, d]) => Number(d?.weightKg) > 0);
+  if (!weighIns.length) return;
+  const n = weighIns.length;
+  const dialog = modal('Weigh-ins from your watch', h('div', { class: 'stack' },
+    h('p', {}, `The import has ${n} weigh-in${n === 1 ? '' : 's'}. Add ${n === 1 ? 'it' : 'them'} to your weight history? Days you logged by hand keep your own number.`),
+    h('button', {
+      class: 'btn btn--primary btn--block',
+      type: 'button',
+      onClick: () => {
+        for (const [date, d] of weighIns) store.logBodyweight(Math.round(d.weightKg * 2.20462 * 10) / 10, date, 'watch');
+        dialog.close();
+        toast(`Added ${n} weigh-in${n === 1 ? '' : 's'}`);
+      },
+    }, `Add ${n} weigh-in${n === 1 ? '' : 's'} from your watch to your weight history`),
+    h('button', { class: 'btn btn--ghost btn--block', type: 'button', onClick: () => dialog.close() }, 'Not now'),
+  ));
 }
 
 function seg(label, on, onClick) {
@@ -379,6 +401,7 @@ function watchCard(st, ctx) {
         const fitNote = droppedDays ? ` Kept the most recent ${keptDays} of ${totalDays} days to fit on this phone.` : '';
         toast(`Imported ${watch.workouts.length} watch workouts and ${keptDays} days.${fitNote}`);
         ctx.rerender();
+        offerWatchWeights(trimmed.watch);
       } catch (err) {
         status.textContent = err.message ?? 'Import failed.';
       } finally {
