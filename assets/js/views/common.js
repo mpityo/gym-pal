@@ -2,6 +2,7 @@
 import { h, modal, matchScore, fmtRel } from '../util.js';
 import { EXERCISES, MUSCLES, exercise, exerciseOr } from '../data/exercises.js';
 import * as store from '../store.js';
+import { exerciseImages } from '../data/images.js';
 import { machineUsage, fmtLb } from '../metrics.js';
 import { hasKey } from '../ai.js';
 
@@ -110,12 +111,69 @@ function missingLast(list, idOf = (x) => x.id) {
   return [...list].sort((a, b) => store.isMissing(idOf(a), gid) - store.isMissing(idOf(b), gid));
 }
 
+// ── Reference pictures ───────────────────────────────────────────────────
+
+/** Neutral square in the exercise's movement colour, used when there is no picture. */
+function thumbTile(exId, size) {
+  const pattern = exerciseOr(exId).pattern;
+  return h('span', { class: `thumb thumb--tile p-${pattern}`, style: { width: `${size}px`, height: `${size}px` }, 'aria-hidden': 'true' });
+}
+
+/**
+ * A small square picture of the exercise, or a coloured tile when there is
+ * none (or it fails to load offline before it was cached), so rows stay aligned.
+ */
+export function exerciseThumb(exId, { size = 44 } = {}) {
+  const [src] = exerciseImages(exId);
+  if (!src) return thumbTile(exId, size);
+  const img = h('img', { class: 'thumb', src, alt: '', width: size, height: size, loading: 'lazy', decoding: 'async' });
+  img.addEventListener('error', () => img.replaceWith(thumbTile(exId, size)), { once: true });
+  return img;
+}
+
+/** Shows a picture full size in a modal. */
+function openPicture(src, title) {
+  modal(title, h('img', { class: 'figure__big', src, alt: title }), { wide: true });
+}
+
+/**
+ * The reference picture(s), full width with a caption. Two images are shown
+ * side by side as "Start" and "End". Tapping one opens it larger. Null when
+ * the exercise has no picture.
+ */
+export function exerciseFigure(exId) {
+  const srcs = exerciseImages(exId);
+  if (!srcs.length) return null;
+  const ex = exerciseOr(exId);
+  const labels = srcs.length === 2 ? ['Start', 'End'] : [null];
+  return h(
+    'figure',
+    { class: 'figure' },
+    h(
+      'div',
+      { class: `figure__row figure__row--${srcs.length}` },
+      srcs.map((src, i) => {
+        const img = h('img', { src, alt: `${ex.name}${labels[i] ? ` — ${labels[i].toLowerCase()}` : ''}`, loading: 'lazy', decoding: 'async' });
+        img.addEventListener('error', () => img.closest('.figure__cell')?.remove(), { once: true });
+        return h(
+          'button',
+          { class: 'figure__cell', type: 'button', onClick: () => openPicture(src, labels[i] ? `${ex.name} · ${labels[i]}` : ex.name) },
+          img,
+          labels[i] && h('span', { class: 'figure__label' }, labels[i]),
+        );
+      }),
+    ),
+    h('figcaption', { class: 'muted small' }, "Reference photo — your gym's machine may look different."),
+  );
+}
+
 function exerciseOption(ex, usage, onPick) {
   const u = usage.get(ex.id);
   const note = store.machineNote(ex.id);
   return h(
     'button',
-    { class: `pick${note.missing ? ' is-missing' : ''}`, type: 'button', onClick: () => onPick(ex.id) },
+    { class: `pick pick--thumb${note.missing ? ' is-missing' : ''}`, type: 'button', onClick: () => onPick(ex.id) },
+    exerciseThumb(ex.id),
     h('span', { class: 'pick__name' }, ex.name, note.missing && h('span', { class: 'tag tag--warn' }, 'not at this gym')),
     h('span', { class: 'pick__meta' }, ex.muscles.primary.map((m) => MUSCLES[m]).join(', '), u ? ` · used ${fmtRel(u.last)}` : ''),
     note.where && h('span', { class: 'pick__where' }, `📍 ${note.where}`),
@@ -223,6 +281,7 @@ export function openHowTo(exId, ctx) {
     h(
       'div',
       { class: 'stack' },
+      exerciseFigure(exId),
       muscleChips(ex),
       h('p', {}, h('strong', {}, 'Look for: '), ex.look),
       h('h3', { class: 'eyebrow' }, 'Set up'),

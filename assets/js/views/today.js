@@ -3,7 +3,7 @@ import * as store from '../store.js';
 import { PLANS, PLAN_BY_ID, WEEK } from '../data/plans.js';
 import { exerciseOr } from '../data/exercises.js';
 import { suggest, weekStart, dayKey, sessionSummary, muscleSets, addDays, fmtLb, fmtDuration, shouldShowBackupReminder } from '../metrics.js';
-import { targetText, pickGym, gymChip } from './common.js';
+import { targetText, pickGym, gymChip, exerciseThumb } from './common.js';
 import { MUSCLES } from '../data/exercises.js';
 
 /** Which plan today is, and which plans this week are still undone. */
@@ -152,6 +152,7 @@ export function renderToday(ctx) {
       return h(
         'li',
         { class: `preview__item${ex.track === 'cardio' ? ' is-cardio' : ''}` },
+        exerciseThumb(item.ex),
         h(
           'button',
           { class: 'preview__name linkish', type: 'button', onClick: () => ctx.go(`machine/${item.ex}`) },
