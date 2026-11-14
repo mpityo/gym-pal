@@ -58,7 +58,8 @@ export function missingIds(state, gymId) {
 export function resolvePlanItems(plan, swaps = {}, missing = () => false) {
   if (!plan) return [];
   return plan.items.map((item, i) => {
-    const out = swaps[i] ? { ...item, ex: swaps[i], swappedFrom: item.ex } : { ...item };
+    // A swap to an id no longer in the library is ignored.
+    const out = swaps[i] && exercise(swaps[i]) ? { ...item, ex: swaps[i], swappedFrom: item.ex } : { ...item };
     if (!missing(out.ex)) return out;
     // Alternatives of what you would have done, then of the plan's own exercise.
     const candidates = [...(exercise(out.ex)?.alts ?? []), item.ex, ...(exercise(item.ex)?.alts ?? [])];

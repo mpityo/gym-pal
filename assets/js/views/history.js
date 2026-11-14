@@ -1,6 +1,6 @@
 import { h, modal, fmtDate, fmtClock } from '../util.js';
 import * as store from '../store.js';
-import { exercise } from '../data/exercises.js';
+import { exerciseOr } from '../data/exercises.js';
 import { sessionSummary, hrSummary, maxHr, weekStart, fmtLb, fmtDuration, fmtW, fmtMinutes, fmtPace } from '../metrics.js';
 import { watchForSession } from '../samsung.js';
 import { zoneBar } from '../charts.js';
@@ -85,10 +85,10 @@ function openSession(s, ctx) {
         sum.avgRestSec && h('div', { class: 'stat' }, h('span', { class: 'stat__value' }, `${Math.round(sum.avgRestSec)} s`), h('span', { class: 'stat__label' }, 'avg rest')),
       ),
       h('ol', { class: 'detail' }, s.entries.map((e) => {
-        const ex = exercise(e.ex);
+        const ex = exerciseOr(e.ex);
         return h('li', {},
           h('button', { class: 'linkish', type: 'button', onClick: () => { dialog.close(); ctx.go(`machine/${e.ex}`); } }, ex.name),
-          e.plannedEx !== e.ex && h('span', { class: 'muted small' }, ` (instead of ${exercise(e.plannedEx).name})`),
+          e.plannedEx !== e.ex && h('span', { class: 'muted small' }, ` (instead of ${exerciseOr(e.plannedEx).name})`),
           h('div', { class: 'mono small' }, e.sets.map((x) => setText(x, ex)).join(' · ')),
         );
       })),

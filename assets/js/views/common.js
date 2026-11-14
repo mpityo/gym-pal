@@ -1,6 +1,6 @@
 /** Pieces shared by several screens. */
 import { h, modal, matchScore, fmtRel } from '../util.js';
-import { EXERCISES, MUSCLES, exercise } from '../data/exercises.js';
+import { EXERCISES, MUSCLES, exercise, exerciseOr } from '../data/exercises.js';
 import * as store from '../store.js';
 import { machineUsage, fmtLb } from '../metrics.js';
 import { hasKey } from '../ai.js';
@@ -127,7 +127,7 @@ function exerciseOption(ex, usage, onPick) {
  * that trains the same primary muscle, then a search over the whole library.
  */
 export function openSwap(exId, { title = 'Swap exercise', onPick, planName, allowPermanent = false } = {}) {
-  const ex = exercise(exId);
+  const ex = exerciseOr(exId);
   const usage = usageMap();
   const listed = missingLast(ex.alts.map(exercise).filter(Boolean));
   const same = missingLast(EXERCISES.filter(
@@ -204,7 +204,7 @@ export function openExercisePicker({ title = 'Add an exercise', onPick }) {
 
 /** The how-to sheet used from a workout. Full detail lives on the Machines screen. */
 export function openHowTo(exId, ctx) {
-  const ex = exercise(exId);
+  const ex = exerciseOr(exId);
   const gid = store.currentGym();
   const note = store.machineNote(exId, gid);
   const where = h('input', { class: 'input', value: note.where, placeholder: 'e.g. back wall, left of the mirrors' });

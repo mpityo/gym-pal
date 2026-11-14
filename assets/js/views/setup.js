@@ -1,9 +1,12 @@
-import { h, modal, toast, download, fmtRel, fmtDate } from '../util.js';
+import { h, modal, toast, download, fmtRel, fmtDate, pluralize } from '../util.js';
 import * as store from '../store.js';
 import * as ai from '../ai.js';
 import * as hr from '../hr.js';
 import { readFiles, buildWatch } from '../samsung.js';
-import { maxHr } from '../metrics.js';
+import { maxHr, parseAmount } from '../metrics.js';
+
+// Reasonable bounds for free-typed profile numbers.
+const BOUNDS = { bodyweight: [50, 700], age: [10, 100], maxHr: [100, 230] };
 
 export function renderSetup(ctx) {
   const st = store.getState();
@@ -13,7 +16,25 @@ export function renderSetup(ctx) {
     h('label', { class: 'field' },
       h('span', {}, label),
       h('span', { class: 'field__row' },
-        h('input', { class: 'input mono', type: 'text', inputMode: 'decimal', value: p[key] ?? '', onChange: (e) => { const v = e.target.value.trim(); store.setProfile({ [key]: v ? Number(v) : null }); ctx.rerender(); } }),
+        h('input', {
+          class: 'input mono',
+          type: 'text',
+          inputMode: 'decimal',
+          value: p[key] ?? '',
+          onChange: (e) => {
+            const v = e.target.value.trim();
+            if (!v) { store.setProfile({ [key]: null }); ctx.rerender(); return; }
+            const [lo, hi] = BOUNDS[key] ?? [0, Infinity];
+            const n = parseAmount(v);
+            if (n === null || n < lo || n > hi) {
+              toast('Enter a number');
+              e.target.value = p[key] ?? '';
+              return;
+            }
+            store.setProfile({ [key]: n });
+            ctx.rerender();
+          },
+        }),
         unit && h('span', { class: 'muted' }, unit),
       ),
       hint && h('span', { class: 'field__hint' }, hint),
@@ -40,6 +61,7 @@ export function renderSetup(ctx) {
       toggle('Beep and vibrate when rest is up', 'restAlert', st),
       toggle('Start the rest timer when I log a set', 'autoRest', st),
       toggle('Keep the screen on during a workout', 'keepAwake', st),
+      'Notification' in window && restNotifyToggle(st),
       Object.keys(st.swaps).some((k) => Object.keys(st.swaps[k]).length) &&
         h('button', { class: 'btn btn--ghost btn--small', type: 'button', onClick: () => { store.update((s) => { s.swaps = {}; }); toast('Plan swaps cleared'); ctx.rerender(); } }, 'Reset my permanent swaps'),
     ),
@@ -51,10 +73,28 @@ export function renderSetup(ctx) {
     h('section', { class: 'card' },
       h('h2', { class: 'card__title' }, 'Your data'),
       h('p', { class: 'muted small' }, 'Everything is stored in this browser on this phone. Export a backup to move it to a new phone. The Claude key is never included.'),
+      h('p', { class: 'muted small' }, `Using ${(store.storageEstimate().bytes / 1e6).toFixed(1)} MB of about 5 MB.`),
       h('div', { class: 'row row--wrap' },
-        h('button', { class: 'btn', type: 'button', onClick: () => download(`gym-pal-backup-${new Date().toISOString().slice(0, 10)}.json`, store.exportJson()) }, 'Export backup'),
+        h('button', {
+          class: 'btn',
+          type: 'button',
+          onClick: () => {
+            download(`gym-pal-backup-${new Date().toISOString().slice(0, 10)}.json`, store.exportJson());
+            store.recordBackupExported();
+            ctx.rerender();
+          },
+        }, 'Export backup'),
         importButton(ctx),
-        h('button', { class: 'btn btn--danger-ghost', type: 'button', onClick: () => { if (confirm('Erase every workout, note and import on this phone?')) { store.replaceState(store.defaultState()); ctx.rerender(); } } }, 'Erase everything'),
+        h('button', {
+          class: 'btn btn--danger-ghost',
+          type: 'button',
+          onClick: () => {
+            if (!confirm('Erase every workout, note and import on this phone?')) return;
+            const { savedPrev } = store.eraseAll();
+            toast('Everything erased', savedPrev ? { action: 'Undo', onAction: () => { store.restorePrevious(); ctx.rerender(); } } : undefined);
+            ctx.rerender();
+          },
+        }, 'Erase everything'),
       ),
     ),
     h('p', { class: 'muted small center' }, 'Gym Pal · not medical advice. Stop any exercise that causes pain.'),
@@ -69,16 +109,74 @@ function toggle(label, key, st) {
   return h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: st.prefs[key], onChange: (e) => store.setPref(key, e.target.checked) }), h('span', {}, label));
 }
 
+/** Opt-in background notification when rest ends. Asks for permission on the way in. */
+function restNotifyToggle(st) {
+  return h(
+    'div',
+    { class: 'stack' },
+    h(
+      'label',
+      { class: 'check' },
+      h('input', {
+        type: 'checkbox',
+        checked: st.prefs.restNotify,
+        onChange: async (e) => {
+          if (!e.target.checked) {
+            store.setPref('restNotify', false);
+            return;
+          }
+          try {
+            const perm = await Notification.requestPermission();
+            if (perm === 'granted') {
+              store.setPref('restNotify', true);
+            } else {
+              e.target.checked = false;
+              toast('Notifications were not allowed, so this stays off.');
+            }
+          } catch {
+            e.target.checked = false;
+            toast('Could not ask for notification permission.');
+          }
+        },
+      }),
+      h('span', {}, 'Notify me if rest ends while the app is in the background'),
+    ),
+    h('p', { class: 'field__hint' }, 'If the screen is locked the phone may delay this. Keeping the screen on (above) is the reliable option.'),
+  );
+}
+
 function importButton(ctx) {
   const file = h('input', {
     type: 'file', accept: 'application/json,.json', hidden: true,
     onChange: async (e) => {
+      const input = e.target;
       try {
-        store.importJson(await e.target.files[0].text());
-        toast('Backup restored');
+        const chosen = input.files[0];
+        if (!chosen) return;
+        const text = await chosen.text();
+        const result = store.validateBackup(text);
+        if (!result.ok) {
+          toast(result.error);
+          return;
+        }
+
+        const cur = store.getState();
+        const curLast = cur.sessions.length ? fmtDate(cur.sessions[cur.sessions.length - 1].startedAt, { month: 'short', day: 'numeric' }) : 'never';
+        const newLast = result.summary.sessions ? fmtDate(result.summary.lastAt, { month: 'short', day: 'numeric' }) : 'never';
+        const exportedNote = result.summary.exportedAt ? `, exported ${fmtDate(new Date(result.summary.exportedAt).getTime(), { month: 'short', day: 'numeric' })}` : '';
+        const droppedNote = result.summary.droppedSessions ? ` ${pluralize(result.summary.droppedSessions, 'damaged workout')} in this file will be skipped.` : '';
+        const question =
+          `Replace what is on this phone (${pluralize(cur.sessions.length, 'workout')}, last on ${curLast}) ` +
+          `with this backup (${pluralize(result.summary.sessions, 'workout')}, last on ${newLast}${exportedNote})?${droppedNote}`;
+        if (!confirm(question)) return;
+
+        const { savedPrev } = store.restoreBackup(result.state);
+        toast('Backup restored', savedPrev ? { action: 'Undo', onAction: () => { store.restorePrevious(); ctx.rerender(); } } : undefined);
         ctx.rerender();
       } catch (err) {
-        toast(err.message);
+        toast(err.message ?? 'Could not read that file.');
+      } finally {
+        input.value = '';
       }
     },
   });
@@ -205,9 +303,10 @@ function watchCard(st, ctx) {
   const file = h('input', {
     type: 'file', multiple: true, accept: '.zip,.csv,application/zip,text/csv', hidden: true,
     onChange: async (e) => {
-      const files = [...e.target.files];
-      if (!files.length) return;
+      const input = e.target;
+      const files = [...input.files];
       try {
+        if (!files.length) return;
         status.textContent = 'Reading…';
         const read = await readFiles(files, (msg) => (status.textContent = msg));
         if (!read.length) {
@@ -217,11 +316,17 @@ function watchCard(st, ctx) {
         status.textContent = 'Crunching…';
         await new Promise((r) => setTimeout(r, 20));
         const watch = buildWatch(read, store.getState().sessions);
-        store.setWatch(watch);
-        toast(`Imported ${watch.workouts.length} watch workouts and ${Object.keys(watch.days).length} days`);
+        const totalDays = Object.keys(watch.days).length;
+        const { state: trimmed, droppedDays } = store.trimWatchToFit({ ...store.getState(), watch });
+        store.setWatch(trimmed.watch);
+        const keptDays = Object.keys(trimmed.watch.days).length;
+        const fitNote = droppedDays ? ` Kept the most recent ${keptDays} of ${totalDays} days to fit on this phone.` : '';
+        toast(`Imported ${watch.workouts.length} watch workouts and ${keptDays} days.${fitNote}`);
         ctx.rerender();
       } catch (err) {
         status.textContent = err.message ?? 'Import failed.';
+      } finally {
+        input.value = '';
       }
     },
   });

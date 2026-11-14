@@ -87,7 +87,14 @@ export function renderMachines(ctx) {
 }
 
 function photoButton(ctx) {
-  const file = h('input', { type: 'file', accept: 'image/*', capture: 'environment', hidden: true, onChange: (e) => identify(e.target.files[0], ctx) });
+  const file = h('input', {
+    type: 'file', accept: 'image/*', capture: 'environment', hidden: true,
+    onChange: (e) => {
+      const chosen = e.target.files[0];
+      e.target.value = '';
+      identify(chosen, ctx);
+    },
+  });
   return h('span', {}, file, h('button', { class: 'btn btn--primary', type: 'button', onClick: () => file.click() }, 'Photo'));
 }
 
@@ -206,7 +213,7 @@ export function renderMachine(ctx) {
         'section',
         { class: 'card' },
         h('h2', { class: 'card__title' }, 'If it is taken'),
-        h('div', { class: 'mlist' }, ex.alts.map(exercise).map((alt) =>
+        h('div', { class: 'mlist' }, ex.alts.map(exercise).filter(Boolean).map((alt) =>
           h('button', { class: 'mrow', type: 'button', onClick: () => ctx.go(`machine/${alt.id}`) },
             h('span', { class: `mrow__pattern p-${alt.pattern}`, 'aria-hidden': 'true' }),
             h('span', { class: 'mrow__main' }, h('span', { class: 'mrow__name' }, alt.name, store.isMissing(alt.id, gid) && h('span', { class: 'tag tag--warn' }, 'not at this gym')), h('span', { class: 'mrow__meta' }, alt.look.split('.')[0])),
