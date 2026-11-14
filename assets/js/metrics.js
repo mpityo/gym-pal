@@ -1,7 +1,7 @@
 /**
  * Every number the app shows is computed here, from the sessions you logged
  * and the watch data you imported. Pure functions, no DOM, so they are tested
- * in Node (see test/metrics.test.mjs).
+ * in Node (see test/).
  *
  * Claude is never asked to count. It is handed these finished numbers and
  * writes prose over them, nothing more.
